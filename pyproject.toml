@@ -1,7 +1,13 @@
 [project]
 name = "projeto"
 version = "0.1.0"
-description = "Add your description here"
+description = "Sistema distribuido de rastreamento de entregas"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pika",
+    "pydantic",
+    "httpx",
+]

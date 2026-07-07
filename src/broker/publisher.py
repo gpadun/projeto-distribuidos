@@ -1,15 +1,37 @@
-"""Publicação de mensagens de evento no Message Broker (padrão Publish-Subscribe)."""
+"""Event publication through RabbitMQ topic exchanges."""
+
+import json
+from typing import Any
+from uuid import UUID
+
+import pika
 
 from src.broker.connection import BrokerConnection
 
 
+def _json_default(value: Any) -> str:
+    if isinstance(value, UUID):
+        return str(value)
+    raise TypeError(f"{value!r} is not JSON serializable")
+
+
 class Publisher:
-    """Publica mensagens de evento (ex: PedidoDisponivel, LocalizacaoEntregador)."""
+    """Publishes event messages such as PedidoDisponivel and EventoLocalizacao."""
 
     def __init__(self, broker_connection: BrokerConnection):
-        """Associa o publicador a uma conexão ativa com o broker."""
-        raise NotImplementedError
+        self.broker_connection = broker_connection
 
     def publish(self, exchange: str, routing_key: str, message: dict) -> None:
-        """Publica `message` no `exchange`/`routing_key` informados."""
-        raise NotImplementedError
+        """Publish a JSON message to the given topic exchange/routing key."""
+        channel = self.broker_connection.get_channel()
+        channel.exchange_declare(exchange=exchange, exchange_type="topic", durable=True)
+        body = json.dumps(message, default=_json_default).encode("utf-8")
+        channel.basic_publish(
+            exchange=exchange,
+            routing_key=routing_key,
+            body=body,
+            properties=pika.BasicProperties(
+                content_type="application/json",
+                delivery_mode=pika.DeliveryMode.Persistent,
+            ),
+        )

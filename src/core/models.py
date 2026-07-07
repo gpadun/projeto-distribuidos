@@ -1,9 +1,4 @@
-"""Estruturas de dados do sistema de rastreamento de entregas.
-
-Modelos derivados diretamente das mensagens definidas em docs/especificacao.md:
-mensagens de comando (request/response), mensagens de evento (publish-subscribe)
-e mensagens internas de infraestrutura (servidor -> servidor).
-"""
+"""Data contracts for the delivery tracking system."""
 
 from enum import Enum
 from uuid import UUID
@@ -11,24 +6,24 @@ from uuid import UUID
 from pydantic import BaseModel
 
 
-# ---------------------------------------------------------------------------
-# Enums
-# ---------------------------------------------------------------------------
-
 class StatusPedido(str, Enum):
-    """Estados possíveis de um pedido ao longo do seu ciclo de vida."""
+    """Order states used throughout the proof of concept."""
 
     RECEM_CRIADO = "RECEM_CRIADO"
     COM_ENTREGADOR = "COM_ENTREGADOR"
     COM_SERVIDOR_RASTREADOR = "COM_SERVIDOR_RASTREADOR"
 
 
-# ---------------------------------------------------------------------------
-# Mensagens de comando (request/response, Cliente/Entregador -> Servidor)
-# ---------------------------------------------------------------------------
+class TipoServidor(str, Enum):
+    """Server types declared by keepAlive messages in the PDF spec."""
+
+    ADM = "ADM"
+    RASTREADOR = "RASTREADOR"
+    SUPORTE = "SUPORTE"
+
 
 class CriarPedido(BaseModel):
-    """Requisição síncrona do cliente para criar um novo pedido."""
+    """Synchronous command sent by a customer to create an order."""
 
     idPedido: UUID
     idCliente: str
@@ -37,7 +32,7 @@ class CriarPedido(BaseModel):
 
 
 class AceitarPedido(BaseModel):
-    """Requisição síncrona do entregador para aceitar um pedido disponível."""
+    """Synchronous command sent by a driver to accept an available order."""
 
     idPedido: UUID
     idEntregador: str
@@ -45,19 +40,15 @@ class AceitarPedido(BaseModel):
 
 
 class ConfirmarEntrega(BaseModel):
-    """Requisição síncrona do cliente confirmando o recebimento do pedido."""
+    """Synchronous command sent by a customer to confirm delivery."""
 
     idPedido: UUID
     idCliente: str
     timestamp: int
 
 
-# ---------------------------------------------------------------------------
-# Mensagens de evento (modelo Publish-Subscribe via Message Broker)
-# ---------------------------------------------------------------------------
-
 class PedidoDisponivel(BaseModel):
-    """Evento publicado pelo Servidor ADM quando um pedido ainda não tem entregador."""
+    """Event published when an order still has no assigned driver."""
 
     idPedido: UUID
     idRestaurante: str
@@ -65,7 +56,7 @@ class PedidoDisponivel(BaseModel):
 
 
 class LocalizacaoEntregador(BaseModel):
-    """Evento publicado pelo entregador com sua posição GPS mais recente."""
+    """Event published by the driver with the newest GPS position."""
 
     idEntregador: str
     idPedido: UUID
@@ -75,7 +66,7 @@ class LocalizacaoEntregador(BaseModel):
 
 
 class EventoLocalizacao(BaseModel):
-    """Evento entregue pelo broker aos clientes assinantes do rastreio de um pedido."""
+    """Location event forwarded to tracking subscribers."""
 
     idPedido: UUID
     latitude: float
@@ -84,68 +75,57 @@ class EventoLocalizacao(BaseModel):
 
 
 class SubscribeRastreio(BaseModel):
-    """Solicitação de um cliente para assinar as atualizações de rastreio de um pedido."""
+    """Tracking subscription message described by the PDF spec."""
 
     idPedido: UUID
+    idServidorRastreador: str
 
 
 class EntregaConfirmada(BaseModel):
-    """Evento publicado após a confirmação de entrega, notificando o entregador."""
+    """Event published after delivery confirmation."""
 
     idPedido: UUID
     timestamp: int
 
 
-# ---------------------------------------------------------------------------
-# Mensagens internas (infraestrutura do sistema, Servidor -> Servidor)
-# ---------------------------------------------------------------------------
-
 class KeepAlive(BaseModel):
-    """Mensagem de heartbeat trocada entre servidores para detectar quedas."""
+    """Periodic heartbeat exchanged between system components."""
 
     idServidor: str
+    tipoServidor: TipoServidor
     timestamp: int
 
 
 class AtualizacaoRoteamento(BaseModel):
-    """Mensagem que atualiza qual servidor rastreador é responsável por quais pedidos."""
+    """Internal message announcing which tracker owns an order."""
 
     idPedido: UUID
     idServidorRastreador: str
     timestamp: int
 
 
-# ---------------------------------------------------------------------------
-# Entidades nomeadas do sistema
-# ---------------------------------------------------------------------------
-
 class Cliente(BaseModel):
-    """Identificação de um cliente: <ID/IP>."""
+    """Customer identity."""
 
     idCliente: str
     ip: str | None = None
 
 
 class Entregador(BaseModel):
-    """Identificação de um entregador: <ID>. Seu IP pode mudar, pois está em movimento."""
+    """Driver identity."""
 
     idEntregador: str
 
 
 class Restaurante(BaseModel):
-    """Identificação de um restaurante (pré-cadastrado/hardcoded): <ID/IP>."""
+    """Hardcoded restaurant identity for the proof of concept."""
 
     idRestaurante: str
     ip: str | None = None
 
 
 class Pedido(BaseModel):
-    """Representação completa de um pedido e seu estágio no ciclo de vida.
-
-    Reflete os esquemas de nomeação por atributos definidos na especificação:
-    Pedido Recém Criado -> Pedido com Entregador -> Pedido com Servidor
-    Rastreador Atribuído (campo servidorRastreadorResponsavel é mutável).
-    """
+    """Complete order representation across its lifecycle."""
 
     idPedido: UUID
     idCliente: str
@@ -157,24 +137,21 @@ class Pedido(BaseModel):
 
 
 class ServidorRastreador(BaseModel):
-    """Identificação de um Servidor Rastreador (R): <ID/IP>."""
+    """Tracker server identity."""
 
     idServidor: str
     ip: str
 
 
 class ServidorAdministrador(BaseModel):
-    """Identificação de um Servidor Administrador (ADM): <ID/IP>."""
+    """Administrator server identity."""
 
     idServidor: str
     ip: str
 
 
 class ServidorSuporte(BaseModel):
-    """Identificação de um Servidor de Suporte (SUP): <ID/IP, ID_Servidor_Rastreio>.
-
-    Cada Servidor de Suporte está associado a exatamente um Servidor Rastreador.
-    """
+    """Support server identity, associated to one tracker server."""
 
     idServidor: str
     ip: str

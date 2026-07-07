@@ -1,123 +1,107 @@
-# Sistema Distribuído de Rastreamento de Entregas
+# Sistema Distribuido de Rastreamento de Entregas
 
-## 1. Visão Geral
+Prova de conceito para a disciplina de Sistemas Distribuidos. O sistema combina:
 
-Este projeto implementa um sistema distribuído para rastreamento de entregas em
-tempo real, desenvolvido como prova de conceito para a disciplina de Sistemas
-Distribuídos.
+- comunicacao sincrona via FastAPI para comandos como `CriarPedido`,
+  `AceitarPedido` e `ConfirmarEntrega`;
+- comunicacao assincrona via RabbitMQ/pika para eventos publish-subscribe como
+  `PedidoDisponivel`, `EventoLocalizacao` e `EntregaConfirmada`;
+- roteamento deterministico por consistent hashing com nos virtuais;
+- tolerancia a falhas com heartbeat, redistribuicao de rastreios e backup em
+  servidor SUP;
+- eleicao de lider ADM pelo Bully Algorithm simplificado, em que o maior ID vira
+  lider.
 
-A comunicação do sistema é híbrida:
+## Estrutura
 
-- **Síncrona (Request/Response)** via FastAPI para operações pontuais, como a
-  criação de um pedido (`CriarPedido`), a aceitação por um entregador
-  (`AceitarPedido`) e a confirmação de entrega (`ConfirmarEntrega`).
-- **Assíncrona (Publish/Subscribe)** via um Message Broker (RabbitMQ + `pika`)
-  para eventos em tempo real, como a publicação da localização de um
-  entregador (`LocalizacaoEntregador`) e sua entrega aos clientes assinantes
-  (`EventoLocalizacao`).
-
-O sistema é composto por três tipos de servidor, cada um com uma
-responsabilidade distinta:
-
-- **Servidor Administrador (ADM):** gerencia a eleição de líder (Bully
-  Algorithm) e mantém o mapa de qual Servidor Rastreador é responsável por
-  qual pedido.
-- **Servidor Rastreador (R):** recebe localizações dos entregadores e
-  gerencia as conexões ativas com os clientes.
-- **Servidor de Suporte (SUP):** mantém um backup dos rastreios de um
-  Servidor Rastreador específico, usado para recuperação em caso de falha.
-
-A distribuição de carga entre Servidores Rastreadores é feita por hash
-determinístico (`hash(idPedido) mod N`), e a consistência dos dados de
-localização é eventual, resolvida por comparação de timestamps.
-
-Os detalhes completos de arquitetura e regras de negócio estão documentados
-em [`docs/spec.md`](docs/spec.md) e [`docs/especificacao.md`](docs/especificacao.md).
-
-## 2. Arquitetura de Pastas
-
-```
+```text
 src/
-├── core/       # Contratos de dados e lógica de domínio pura
-│   ├── models.py    # Modelos Pydantic de todas as mensagens e entidades da spec
-│   └── routing.py   # Hash determinístico para descoberta do servidor responsável
-├── broker/     # Camada de integração com o Message Broker (RabbitMQ/pika)
-│   ├── connection.py  # Gerenciamento da conexão com o broker
-│   ├── publisher.py   # Publicação de eventos (Publish)
-│   └── subscriber.py  # Assinatura de eventos (Subscribe)
-├── servers/    # Os três papéis de servidor descritos na spec
-│   ├── adm_server.py       # Servidor Administrador
-│   ├── tracker_server.py   # Servidor Rastreador (R)
-│   └── support_server.py   # Servidor de Suporte (SUP)
-└── clients/    # Simuladores usados para testes sem dispositivos reais
-    ├── mock_driver.py     # Simula um entregador publicando localizações
-    └── mock_customer.py   # Simula um cliente criando pedidos e assinando rastreio
-
-tests/          # Testes automatizados (pytest), espelhando a estrutura de src/
-docs/           # Fonte da verdade: especificação de arquitetura e regras de negócio
+  api.py                 # API FastAPI para comandos sincronos
+  core/
+    models.py            # Contratos de mensagens e entidades
+    routing.py           # Hash deterministico de roteamento
+    serialization.py     # Compatibilidade Pydantic v1/v2
+  broker/
+    connection.py        # Conexao RabbitMQ
+    publisher.py         # Publicacao em exchanges topic
+    subscriber.py        # Assinatura de topicos
+  servers/
+    adm_server.py        # Coordenacao, pedidos, heartbeats e eleicao
+    tracker_server.py    # Rastreio e publicacao de localizacao
+    support_server.py    # Backup dos rastreios de um R
+  clients/
+    mock_customer.py     # Simulador de cliente
+    mock_driver.py       # Simulador de entregador
+tests/
+  test_routing.py
+  test_models.py
+  test_distributed_flow.py
+docs/
+  especificacao.md
+  spec.md
 ```
 
-A dependência entre camadas segue uma direção única: `servers/` e `clients/`
-dependem de `core/` e `broker/`, mas `core/` não depende de nenhuma outra
-camada do projeto — ele contém apenas os contratos de dados e a lógica de
-domínio pura (ex: o hash de roteamento).
+A dependencia entre camadas segue uma direcao unica: `servers/` e `clients/`
+dependem de `core/` e `broker/`, mas `core/` nao depende de nenhuma outra
+camada do projeto. Ele contem apenas os contratos de dados e a logica de dominio
+pura, como o roteamento por consistent hashing.
 
-## 3. Metodologia: Spec-Driven Development (SDD)
+## Metodologia: Spec-Driven Development (SDD)
 
 Este projeto segue a metodologia **Spec-Driven Development**: nenhuma linha de
-código de negócio é escrita sem uma base clara e explícita nos documentos da
-pasta [`docs/`](docs/). Se uma especificação estiver ambígua ou incompleta, o
-passo correto é esclarecê-la antes de implementar — não inventar
-comportamento.
+codigo de negocio deve ser escrita sem uma base clara e explicita nos documentos
+da pasta [`docs/`](docs/) e no arquivo
+[`Trabalho DSID Especificacoes.pdf`](docs/Trabalho%20DSID%20Especificacoes.pdf). Se uma
+especificacao estiver ambigua ou incompleta, o passo correto e esclarecer antes
+de implementar, nao inventar comportamento.
 
-O arquivo [`CLAUDE.md`](CLAUDE.md), na raiz do repositório, define as regras
-de colaboração com o assistente de IA usado no desenvolvimento deste projeto
-(Claude Code). Ele estabelece que:
+Regras praticas para continuar o projeto:
 
-- A pasta `docs/` é a fonte da verdade para toda decisão de implementação.
-- O desenvolvimento deve ocorrer em passos curtos e incrementais, com
-  validação humana entre cada etapa.
-- Não deve haver reescrita de arquivos inteiros ou introdução de bibliotecas
-  além do estritamente necessário para a tarefa em questão.
+- A especificacao do trabalho e a fonte da verdade para toda decisao de
+  implementacao.
+- O desenvolvimento deve ocorrer em passos curtos e incrementais.
+- Cada etapa deve ser validada com testes ou com um roteiro de demonstracao.
+- Novas dependencias devem ser introduzidas apenas quando forem necessarias para
+  cumprir a especificacao.
+- O checklist em [`docs/status_projeto.md`](docs/status_projeto.md) deve ser
+  atualizado sempre que uma etapa for concluida.
 
-**Se você (colega de grupo) for continuar este projeto com ajuda de IA,
-leia o `CLAUDE.md` antes de pedir novas implementações** — ele garante que o
-assistente siga o mesmo fluxo de trabalho (ler a spec, planejar, validar,
-executar, testar) usado até aqui, mantendo consistência entre as
-contribuições do grupo.
+## Como Rodar o Projeto
 
-## 4. Como Rodar o Projeto
+Crie o ambiente e instale as dependencias:
 
-### Pré-requisitos
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+```
 
-- Python 3.10 ou superior
+Rode os testes:
 
-### Passo a passo
+```bash
+pytest -q
+```
 
-1. Crie e ative o ambiente virtual (a partir da raiz do repositório):
+Suba a API:
 
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-   ```
+```bash
+python main.py
+```
 
-2. Instale as dependências:
+A API fica em `http://127.0.0.1:8000`, com documentacao interativa em
+`http://127.0.0.1:8000/docs`.
 
-   ```bash
-   pip install -r requirements.txt
-   ```
+## Endpoints principais
 
-3. Rode os testes de roteamento (hash determinístico de distribuição de
-   pedidos entre Servidores Rastreadores):
+- `POST /pedidos`: cria pedido e publica `PedidoDisponivel`;
+- `POST /pedidos/aceitar`: associa entregador e servidor rastreador;
+- `POST /pedidos/confirmar`: confirma entrega e publica `EntregaConfirmada`;
+- `POST /infra/keepalive`: registra heartbeat;
+- `POST /infra/eleicao`: executa eleicao Bully simplificada;
+- `GET /estado`: inspeciona o estado atual do ADM.
 
-   ```bash
-   pytest tests/test_routing.py -v
-   ```
+## Observacao sobre RabbitMQ
 
-> **Nota:** `tests/test_models.py` ainda é um esqueleto (assinaturas de teste
-> sem implementação, aguardando a próxima etapa do SDD) e falha
-> propositalmente se executado. Por isso, `pytest` sem argumentos ainda não
-> passa por completo — use o caminho específico acima enquanto isso não for
-> implementado.
-
-Para desativar o ambiente virtual quando terminar, use `deactivate`.
+Os modulos em `src/broker/` estao prontos para RabbitMQ real. Os testes usam
+publicadores injetaveis em memoria para validar a logica sem exigir Docker ou
+broker ativo.
