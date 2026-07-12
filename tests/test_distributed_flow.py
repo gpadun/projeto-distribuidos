@@ -13,6 +13,9 @@ from src.core.models import (
     KeepAlive,
     LocalizacaoEntregador,
     TipoServidor,
+    IniciarEleicao,
+    RespostaEleicao,
+    NovoLider,
 )
 from src.servers.adm_server import ADMServer
 from src.servers.support_server import SupportServer
@@ -27,6 +30,46 @@ class RecordingPublisher:
         self.messages.append(
             {"exchange": exchange, "routing_key": routing_key, "message": message}
         )
+
+
+class ElectionRouter:
+    def __init__(self):
+        self.adms: dict[str, ADMServer] = {}
+        self.mortos: set[str] = set()
+
+    def registrar(self, adm: ADMServer) -> None:
+        self.adms[adm.id_servidor] = adm
+
+    def marcar_morto(self, id_adm: str) -> None:
+        self.mortos.add(id_adm)
+        self.adms.pop(id_adm, None)
+
+    async def enviar(self, id_destino: str, mensagem) -> None:
+        if id_destino in self.mortos:
+            return
+
+        destino = self.adms[id_destino]
+
+        if isinstance(mensagem, IniciarEleicao):
+            await destino.processar_iniciar_eleicao(mensagem)
+        elif isinstance(mensagem, RespostaEleicao):
+            await destino.processar_resposta_eleicao(mensagem)
+        elif isinstance(mensagem, NovoLider):
+            await destino.processar_novo_lider(mensagem)
+
+
+def criar_cluster_adm(ids: list[str], router: ElectionRouter) -> dict[str, ADMServer]:
+    adms = {}
+    for id_adm in ids:
+        adm = ADMServer(
+            id_servidor=id_adm,
+            servidores_adm=ids,
+            election_sender=router.enviar,
+            eleicao_timeout=0.2,
+        )
+        router.registrar(adm)
+        adms[id_adm] = adm
+    return adms
 
 
 def run(coro):
@@ -213,14 +256,12 @@ def test_adm_ignora_chave_invalida_no_backup_do_sup():
 
 
 def test_bully_algorithm_usa_sufixo_numerico_do_id():
-    adm = ADMServer("adm-1", servidores_adm=["adm-1", "adm-2", "adm-10"])
-
-    assert run(adm.iniciar_eleicao()) == "adm-10"
+    assert ADMServer._maior_id(["adm-1", "adm-2", "adm-10"]) == "adm-10"
 
 
 def test_adm_keepalive_marca_adm_como_ativo():
     adm = ADMServer("adm-1", servidores_adm=["adm-1", "adm-2"])
-    adm.servidores_adm_ativos.discard("adm_2")
+    adm.servidores_adm_ativos.discard("adm-2")
 
     run(adm.processar_keepalive(
         KeepAlive(idServidor="adm-2", tipoServidor=TipoServidor.ADM, timestamp=1)
@@ -322,3 +363,102 @@ def test_adm_chama_callback_quando_lider_cai():
     run(adm.detectar_falha_lider())
 
     assert chamadas == ["adm-3"]
+
+
+def test_bully_maior_id_ativo_vira_lider():
+    router = ElectionRouter()
+    adms = criar_cluster_adm(["adm-1", "adm-2", "adm-3"], router)
+
+    # adm-3 era líder e "caiu"
+    for adm in adms.values():
+        adm.servidores_adm_ativos.discard("adm-3")
+    adms["adm-1"].lider_atual = "adm-3"
+    adms["adm-1"].id_lider_anterior = "adm-3"
+    adms["adm-1"].aguardando_eleicao = True
+
+    lider = run(adms["adm-1"].iniciar_eleicao())
+
+    assert lider == "adm-2"  # adm-3 fora, adm-2 é o maior ativo
+    assert adms["adm-1"].lider_atual == "adm-2"
+    assert adms["adm-2"].lider_atual == "adm-2"
+
+
+def test_bully_iniciador_desiste_quando_maior_responde():
+    router = ElectionRouter()
+    adms = criar_cluster_adm(["adm-1", "adm-2", "adm-3"], router)
+
+    # adm-3 "caiu" em todo o cluster
+    for adm in adms.values():
+        adm.servidores_adm_ativos.discard("adm-3")
+        adm.lider_atual = "adm-3"
+        adm.id_lider_anterior = "adm-3"
+
+    run(adms["adm-1"].iniciar_eleicao())
+
+    assert adms["adm-1"].recebeu_resposta_de_maior is True
+    assert adms["adm-1"].eleicao_em_andamento is False
+    assert adms["adm-2"].lider_atual == "adm-2"
+    assert adms["adm-1"].lider_atual == "adm-2"  # recebeu NovoLider do adm-2
+
+
+def test_bully_sem_maiores_ativos_torna_se_lider():
+    adm = ADMServer("adm-10", servidores_adm=["adm-1", "adm-10"], eleicao_timeout=0.2)
+    adm.servidores_adm_ativos = {"adm-10"}  # só eu
+
+    lider = run(adm.iniciar_eleicao())
+
+    assert lider == "adm-10"
+    assert adm.lider_disponivel is True
+
+
+def test_bully_novo_lider_atualiza_peers():
+    router = ElectionRouter()
+    adms = criar_cluster_adm(["adm-1", "adm-2"], router)
+
+    run(adms["adm-2"].processar_novo_lider(
+        NovoLider(idServidor="adm-2", timestamp=1)
+    ))
+
+    assert adms["adm-1"].lider_atual == "adm-2"
+    assert adms["adm-1"].aguardando_eleicao is False
+
+
+def test_bully_eleicao_apos_falha_do_lider():
+    router = ElectionRouter()
+    adms = criar_cluster_adm(["adm-1", "adm-2", "adm-3"], router)
+
+    for adm in adms.values():
+        adm.lider_atual = "adm-3"
+        adm.ultimo_keepalive["adm-3"] = time() - 100
+        adm.servidores_adm_ativos.discard("adm-3")  # reforço explícito
+
+    router.marcar_morto("adm-3")  # use marcar_morto, não só pop
+
+    run(adms["adm-1"].detectar_falha_lider())
+    run(adms["adm-1"].iniciar_eleicao())
+
+    assert adms["adm-1"].lider_atual == "adm-2"
+    assert adms["adm-2"].lider_atual == "adm-2"
+    assert adms["adm-1"].aguardando_eleicao is False
+
+
+def test_bully_eleicao_disparada_por_callback():
+    router = ElectionRouter()
+    adms = criar_cluster_adm(["adm-1", "adm-2", "adm-3"], router)
+
+    # Define callback DEPOIS de criar adm-1, ou reatribui:
+    async def on_lider_caiu(id_lider):
+        await adms["adm-1"].iniciar_eleicao()
+
+    adms["adm-1"].on_lider_caiu = on_lider_caiu
+
+    for adm in adms.values():
+        adm.servidores_adm_ativos.discard("adm-3")
+
+    adms["adm-1"].lider_atual = "adm-3"
+    adms["adm-1"].ultimo_keepalive["adm-3"] = time() - 10
+
+    run(adms["adm-1"].detectar_falha_lider())
+
+    assert adms["adm-1"].lider_atual == "adm-2"
+    assert adms["adm-1"].aguardando_eleicao is False

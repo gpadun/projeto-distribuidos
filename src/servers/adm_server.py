@@ -17,6 +17,9 @@ from src.core.models import (
     PedidoDisponivel,
     StatusPedido,
     TipoServidor,
+    IniciarEleicao,
+    RespostaEleicao,
+    NovoLider,
 )
 from src.core.routing import escolher_servidor_consistent_hash
 from src.core.serialization import to_message_dict
@@ -36,6 +39,8 @@ class ADMServer:
         heartbeat_timeout: float = 10.0,
         keepalive_sender: Callable[[str, KeepAlive], Awaitable[None]] | None = None,
         on_lider_caiu: Callable[[str], Awaitable[None]] | None = None,
+        election_sender: Callable[[str, IniciarEleicao | RespostaEleicao | NovoLider], Awaitable[None]] | None = None,
+        eleicao_timeout: float = 2.0,
     ):
         self.id_servidor = id_servidor
         self.publisher = publisher
@@ -45,6 +50,8 @@ class ADMServer:
         self.heartbeat_timeout = heartbeat_timeout
         self.keepalive_sender = keepalive_sender
         self.on_lider_caiu = on_lider_caiu
+        self.election_sender = election_sender
+        self.eleicao_timeout = eleicao_timeout
         instante_inicial = time()
 
         self.pedidos: dict[UUID, Pedido] = {}
@@ -57,7 +64,6 @@ class ADMServer:
         self.servidores_adm = sorted(set(servidores_adm or [id_servidor]))
         self.lider_atual = self._maior_id(self.servidores_adm)
 
-        self.servdores_adm_ativos: set[str]
         self.servidores_adm_ativos = set(self.servidores_adm)
         for id_adm in self.servidores_adm:
             self.ultimo_keepalive[id_adm] = instante_inicial
@@ -65,6 +71,8 @@ class ADMServer:
         self.lider_disponivel: bool = True
         self.aguardando_eleicao: bool = False
         self.id_lider_anterior: str | None = None
+        self.eleicao_em_andamento: bool = False
+        self.recebeu_resposta_de_maior: bool = False
     
 
     async def criar_pedido(self, requisicao: CriarPedido) -> Pedido:
@@ -224,8 +232,32 @@ class ADMServer:
 
     async def iniciar_eleicao(self) -> str:
         """Run a deterministic Bully election: the highest ADM id becomes leader."""
-        self.lider_atual = self._maior_id(self.servidores_adm)
-        return self.lider_atual
+        if self.eleicao_em_andamento:
+            return self.lider_atual
+        
+        self.eleicao_em_andamento = True
+        self.recebeu_resposta_de_maior = False
+
+        maiores = self._adms_ativos_com_id_maior_que(self.id_servidor)
+
+        # Sou o maior ID ativo -> viro líder
+        if not maiores:
+            return await self._tornar_lider()
+        
+        # Mando eleicao para todos os maiores
+        for id_adm in maiores:
+            await self._enviar_iniciar_eleicao(id_adm)
+
+        # Espero respostas dentro do timeout
+        await self._aguardar_timeout_eleicao()
+
+        # Alguém maior respondeu -> desisto
+        if self.recebeu_resposta_de_maior:
+            self.eleicao_em_andamento = False
+            return self.lider_atual # NovoLider vai atualizar depois
+        
+        # Ninguém respondeu -> eu sou o líder
+        return await self._tornar_lider()
 
     def servidores_com_heartbeat_expirado(self, agora: float | None = None) -> list[str]:
         """Return tracker ids whose heartbeat is older than the configured timeout."""
@@ -256,6 +288,35 @@ class ADMServer:
             return (0, id_servidor)
 
         return max(ids, key=chave)
+    
+    @staticmethod
+    def _chave_id(id_servidor: str) -> tuple[int, str]:
+        match = re.search(r"(\d+)$", id_servidor)
+        if match:
+            return (int(match.group(1)), id_servidor)
+        return (0, id_servidor)
+
+    @staticmethod
+    def _maior_id(ids: list[str]) -> str:
+        return max(ids, key=ADMServer._chave_id)
+
+    def _id_e_maior_que(self, id_a: str, id_b: str) -> bool:
+        return self._chave_id(id_a) > self._chave_id(id_b)
+
+    def _adms_ativos_com_id_maior_que(self, id_servidor: str) -> list[str]:
+        return sorted(
+            id_adm
+            for id_adm in self.servidores_adm_ativos
+            if id_adm != id_servidor and self._id_e_maior_que(id_adm, id_servidor)
+        )
+
+    def _adms_ativos_com_id_menor_que(self, id_servidor: str) -> list[str]:
+        return sorted(
+            id_adm
+            for id_adm in self.servidores_adm_ativos
+            if id_adm != id_servidor and self._id_e_maior_que(id_servidor, id_adm)
+        )
+
 
     def sou_lider(self) -> bool:
         return self.lider_atual == self.id_servidor
@@ -299,3 +360,77 @@ class ADMServer:
         await self.executar_ciclo_keepalive()
         self.processar_expiracao_adms()
         return await self.detectar_falha_lider()
+    
+    async def _enviar_iniciar_eleicao(self, id_destino: str) -> None:
+        if self.election_sender is None:
+            return
+        mensagem = IniciarEleicao(
+            idServidorOrigem=self.id_servidor,
+            idServidorDestino=id_destino,
+            idLiderAnterior=self.id_lider_anterior,
+            timestamp=int(time()),
+        )
+        await self.election_sender(id_destino, mensagem)
+
+    async def _enviar_resposta_eleicao(self, id_destino: str) -> None:
+        if self.election_sender is None:
+            return
+
+        mensagem = RespostaEleicao(
+            idServidorOrigem=self.id_servidor,
+            idServidorDestino=id_destino,
+            timestamp=int(time()),
+        )
+        await self.election_sender(id_destino, mensagem)
+
+    async def _enviar_novo_lider(self, id_destino: str, mensagem: NovoLider) -> None:
+        if self.election_sender is None:
+            return
+
+        await self.election_sender(id_destino, mensagem)
+
+    async def _aguardar_timeout_eleicao(self) -> None:
+        import asyncio
+
+        inicio = time()
+        while time() - inicio < self.eleicao_timeout:
+            if self.recebeu_resposta_de_maior:
+                return
+            await asyncio.sleep(0.05)
+
+    async def _tornar_lider(self) -> str:
+        self.lider_atual = self.id_servidor
+        self.lider_disponivel = True
+        self.aguardando_eleicao = False
+        self.eleicao_em_andamento = False
+
+        mensagem = NovoLider(
+            idServidor=self.id_servidor,
+            idLiderAnterior=self.id_lider_anterior,
+            timestamp=int(time()),
+        )
+
+        for id_adm in self._adms_ativos_com_id_menor_que(self.id_servidor):
+            await self._enviar_novo_lider(id_adm, mensagem)
+
+        return self.lider_atual
+    
+    async def processar_iniciar_eleicao(self, mensagem: IniciarEleicao) -> None:
+        # 1. Responde para quem pediu
+        await self._enviar_resposta_eleicao(mensagem.idServidorOrigem)
+
+        # 2. Dispura entre os maiores que eu
+        await self.iniciar_eleicao()
+
+    async def processar_resposta_eleicao(self, mensagem: RespostaEleicao) -> None:
+        if mensagem.idServidorDestino != self.id_servidor:
+            return
+
+        if self._id_e_maior_que(mensagem.idServidorOrigem, self.id_servidor):
+            self.recebeu_resposta_de_maior = True
+
+    async def processar_novo_lider(self, mensagem: NovoLider) -> None:
+        self.lider_atual = mensagem.idServidor
+        self.lider_disponivel = True
+        self.aguardando_eleicao = False
+        self.eleicao_em_andamento = False
