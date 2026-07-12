@@ -35,6 +35,7 @@ class ADMServer:
         support_servers: dict[str, SupportServer] | None = None,
         heartbeat_timeout: float = 10.0,
         keepalive_sender: Callable[[str, KeepAlive], Awaitable[None]] | None = None,
+        on_lider_caiu: Callable[[str], Awaitable[None]] | None = None,
     ):
         self.id_servidor = id_servidor
         self.publisher = publisher
@@ -43,6 +44,7 @@ class ADMServer:
         self.support_servers = support_servers or {}
         self.heartbeat_timeout = heartbeat_timeout
         self.keepalive_sender = keepalive_sender
+        self.on_lider_caiu = on_lider_caiu
         instante_inicial = time()
 
         self.pedidos: dict[UUID, Pedido] = {}
@@ -59,6 +61,11 @@ class ADMServer:
         self.servidores_adm_ativos = set(self.servidores_adm)
         for id_adm in self.servidores_adm:
             self.ultimo_keepalive[id_adm] = instante_inicial
+
+        self.lider_disponivel: bool = True
+        self.aguardando_eleicao: bool = False
+        self.id_lider_anterior: str | None = None
+    
 
     async def criar_pedido(self, requisicao: CriarPedido) -> Pedido:
         """Create an order and publish PedidoDisponivel for subscribed drivers."""
@@ -249,3 +256,46 @@ class ADMServer:
             return (0, id_servidor)
 
         return max(ids, key=chave)
+
+    def sou_lider(self) -> bool:
+        return self.lider_atual == self.id_servidor
+
+    def lider_com_heartbeat_expirado(self, agora: float | None = None) -> bool:
+        if self.sou_lider():
+            return False
+        
+        instance = time() if agora is None else agora
+        ultimo = self.ultimo_keepalive.get(self.lider_atual)
+
+        if ultimo is None:
+            return True
+        
+        return instance - ultimo > self.heartbeat_timeout
+
+    async def detectar_falha_lider(self, agora: float | None = None) -> bool:
+        if self.sou_lider():
+            return False
+        
+        if not self.lider_disponivel:
+            return True # falha já detectado, ainda sem eleição
+        
+        expirou = self.lider_com_heartbeat_expirado(agora)
+        lider_inativo = self.lider_atual not in self.servidores_adm_ativos
+
+        if not expirou and not lider_inativo:
+            return False
+        
+        self.id_lider_anterior = self.lider_atual
+        self.lider_disponivel = False
+        self.aguardando_eleicao = True
+        self.servidores_adm_ativos.discard(self.lider_atual)
+
+        if self.on_lider_caiu is not None:
+            await self.on_lider_caiu(self.id_lider_anterior)
+
+        return True
+    
+    async def executar_ciclo_monitoramento(self) -> bool:
+        await self.executar_ciclo_keepalive()
+        self.processar_expiracao_adms()
+        return await self.detectar_falha_lider()

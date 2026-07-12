@@ -244,3 +244,81 @@ def test_adm_executar_ciclo_keepalive_envia_para_peers():
     run(adm.executar_ciclo_keepalive())
 
     assert sorted(envios) == ["adm-2", "adm-3"]
+
+
+def test_adm_detecta_falha_do_lider_remoto():
+    adm = ADMServer(
+        "adm-1",
+        servidores_adm=["adm-1", "adm-2", "adm-3"],
+        heartbeat_timeout=5,
+    )
+    adm.lider_atual = "adm-3"
+    adm.ultimo_keepalive["adm-3"] = time() - 10
+
+    falha = run(adm.detectar_falha_lider())
+
+    assert falha is True
+    assert adm.lider_disponivel is False
+    assert adm.aguardando_eleicao is True
+    assert adm.id_lider_anterior == "adm-3"
+    assert "adm-3" not in adm.servidores_adm_ativos
+
+
+def test_adm_nao_detecta_falha_quando_eu_sou_lider():
+    adm = ADMServer("adm-3", servidores_adm=["adm-1", "adm-2", "adm-3"])
+    adm.lider_atual = "adm-3"
+    adm.ultimo_keepalive["adm-3"] = time() - 100  # mesmo expirado
+
+    falha = run(adm.detectar_falha_lider())
+
+    assert falha is False
+    assert adm.lider_disponivel is True
+
+
+def test_adm_nao_detecta_falha_com_lider_vivo():
+    adm = ADMServer("adm-1", servidores_adm=["adm-1", "adm-2", "adm-3"])
+    adm.lider_atual = "adm-3"
+
+    run(adm.processar_keepalive(
+        KeepAlive(idServidor="adm-3", tipoServidor=TipoServidor.ADM, timestamp=1)
+    ))
+
+    falha = run(adm.detectar_falha_lider())
+
+    assert falha is False
+    assert adm.lider_disponivel is True
+
+
+def test_adm_ciclo_monitoramento_detecta_falha_lider():
+    adm = ADMServer(
+        "adm-1",
+        servidores_adm=["adm-1", "adm-2", "adm-3"],
+        heartbeat_timeout=5,
+    )
+    adm.lider_atual = "adm-3"
+    adm.ultimo_keepalive["adm-3"] = time() - 10
+
+    falha = run(adm.executar_ciclo_monitoramento())
+
+    assert falha is True
+    assert adm.aguardando_eleicao is True
+
+
+def test_adm_chama_callback_quando_lider_cai():
+    chamadas = []
+
+    async def on_lider_caiu(id_lider):
+        chamadas.append(id_lider)
+
+    adm = ADMServer(
+        "adm-1",
+        servidores_adm=["adm-1", "adm-2", "adm-3"],
+        heartbeat_timeout=5,
+        on_lider_caiu=on_lider_caiu,
+    )
+    adm.lider_atual = "adm-3"
+    adm.ultimo_keepalive["adm-3"] = time() - 10
+
+    run(adm.detectar_falha_lider())
+
+    assert chamadas == ["adm-3"]
