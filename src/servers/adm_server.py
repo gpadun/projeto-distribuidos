@@ -26,6 +26,17 @@ from src.core.serialization import to_message_dict
 from src.servers.support_server import SupportServer
 
 
+class NaoELiderError(Exception):
+    """Raised when a non-leader ADM tries to process a leader-only command."""
+
+    def __init__(self, id_servidor: str, lider_atual: str):
+        self.id_servidor = id_servidor
+        self.lider_atual = lider_atual
+        super().__init__(
+            f"servidor {id_servidor} nao e o lider ADM; lider atual: {lider_atual}"
+        )
+
+
 class ADMServer:
     """Coordinates orders, tracker routing, heartbeat state and leader election."""
 
@@ -77,6 +88,7 @@ class ADMServer:
 
     async def criar_pedido(self, requisicao: CriarPedido) -> Pedido:
         """Create an order and publish PedidoDisponivel for subscribed drivers."""
+        self.garantir_lider()
         pedido = Pedido(
             idPedido=requisicao.idPedido,
             idCliente=requisicao.idCliente,
@@ -96,6 +108,7 @@ class ADMServer:
 
     async def aceitar_pedido(self, requisicao: AceitarPedido) -> Pedido:
         """Assign an order to a driver and choose the responsible tracker by hash."""
+        self.garantir_lider()
         pedido = self.pedidos.get(requisicao.idPedido)
         if pedido is None:
             raise KeyError("pedido nao encontrado")
@@ -117,6 +130,7 @@ class ADMServer:
 
     async def confirmar_entrega(self, requisicao: ConfirmarEntrega) -> EntregaConfirmada:
         """Confirm delivery and notify the driver through the broker."""
+        self.garantir_lider()
         pedido = self.pedidos.get(requisicao.idPedido)
         if pedido is None:
             raise KeyError("pedido nao encontrado")
@@ -320,6 +334,11 @@ class ADMServer:
 
     def sou_lider(self) -> bool:
         return self.lider_atual == self.id_servidor
+
+    def garantir_lider(self) -> None:
+        """Raise NaoELiderError when this ADM is not the current cluster leader."""
+        if not self.sou_lider():
+            raise NaoELiderError(self.id_servidor, self.lider_atual)
 
     def lider_com_heartbeat_expirado(self, agora: float | None = None) -> bool:
         if self.sou_lider():

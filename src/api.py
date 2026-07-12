@@ -6,9 +6,17 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 
-from src.core.models import AceitarPedido, ConfirmarEntrega, CriarPedido, KeepAlive, IniciarEleicao, RespostaEleicao, NovoLider
+from src.core.models import (
+    AceitarPedido,
+    ConfirmarEntrega,
+    CriarPedido,
+    IniciarEleicao,
+    KeepAlive,
+    NovoLider,
+    RespostaEleicao,
+)
 from src.infra.adm_transport import criar_adm_com_transporte_http
-from src.servers.adm_server import ADMServer
+from src.servers.adm_server import ADMServer, NaoELiderError
 
 
 def parse_adm_peers(raw: str) -> dict[str, str]:
@@ -24,7 +32,11 @@ def parse_adm_peers(raw: str) -> dict[str, str]:
 
 def _criar_adm_padrao() -> ADMServer:
     id_servidor = os.getenv("ADM_ID", "adm-1")
-    servidores_adm = os.getenv("ADM_CLUSTER", "adm-1,adm-2,adm-3").split(",")
+    servidores_adm = [
+        servidor.strip()
+        for servidor in os.getenv("ADM_CLUSTER", "adm-1,adm-2,adm-3").split(",")
+        if servidor.strip()
+    ]
     peers_raw = os.getenv("ADM_PEERS", "")
     enderecos = parse_adm_peers(peers_raw) if peers_raw else {}
     if enderecos:
@@ -34,7 +46,6 @@ def _criar_adm_padrao() -> ADMServer:
             servidores_adm=servidores_adm,
             servidores_rastreadores=["rastreador-1", "rastreador-2"],
         )
-    # fallback para testes locais sem HTTP
     return ADMServer(
         id_servidor=id_servidor,
         servidores_adm=servidores_adm,
@@ -47,6 +58,18 @@ def _exception_detail(exc: Exception) -> str:
     return str(exc.args[0]) if exc.args else str(exc)
 
 
+def _http_exception_nao_lider(exc: NaoELiderError) -> HTTPException:
+    """Tell the client which ADM is the leader so it can resend the request."""
+    return HTTPException(
+        status_code=409,
+        detail={
+            "mensagem": "este servidor ADM nao e o lider; reenvie o comando ao lider atual",
+            "idServidor": exc.id_servidor,
+            "liderAtual": exc.lider_atual,
+        },
+    )
+
+
 def create_app(adm_server: ADMServer | None = None) -> FastAPI:
     """Create an API app backed by one ADMServer instance."""
     adm = adm_server or _criar_adm_padrao()
@@ -56,8 +79,9 @@ def create_app(adm_server: ADMServer | None = None) -> FastAPI:
         async def loop_monitoramento():
             intervalo = float(os.getenv("ADM_HEARTBEAT_INTERVAL", "5"))
             while True:
-                falha = await adm.executar_ciclo_monitoramento()
+                await adm.executar_ciclo_monitoramento()
                 await asyncio.sleep(intervalo)
+
         task = asyncio.create_task(loop_monitoramento())
         try:
             yield
@@ -78,12 +102,17 @@ def create_app(adm_server: ADMServer | None = None) -> FastAPI:
 
     @app.post("/pedidos")
     async def criar_pedido(requisicao: CriarPedido):
-        return await adm.criar_pedido(requisicao)
+        try:
+            return await adm.criar_pedido(requisicao)
+        except NaoELiderError as exc:
+            raise _http_exception_nao_lider(exc) from exc
 
     @app.post("/pedidos/aceitar")
     async def aceitar_pedido(requisicao: AceitarPedido):
         try:
             return await adm.aceitar_pedido(requisicao)
+        except NaoELiderError as exc:
+            raise _http_exception_nao_lider(exc) from exc
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=_exception_detail(exc)) from exc
 
@@ -91,6 +120,8 @@ def create_app(adm_server: ADMServer | None = None) -> FastAPI:
     async def confirmar_entrega(requisicao: ConfirmarEntrega):
         try:
             return await adm.confirmar_entrega(requisicao)
+        except NaoELiderError as exc:
+            raise _http_exception_nao_lider(exc) from exc
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=_exception_detail(exc)) from exc
         except ValueError as exc:
@@ -105,26 +136,36 @@ def create_app(adm_server: ADMServer | None = None) -> FastAPI:
     async def eleicao():
         lider = await adm.iniciar_eleicao()
         return {"lider": lider}
-    
+
     @app.post("/infra/eleicao/iniciar")
     async def receber_iniciar_eleicao(mensagem: IniciarEleicao):
         await adm.processar_iniciar_eleicao(mensagem)
         return {"ok": True}
-    
+
     @app.post("/infra/eleicao/resposta")
     async def receber_resposta_eleicao(mensagem: RespostaEleicao):
         await adm.processar_resposta_eleicao(mensagem)
         return {"ok": True}
-    
+
     @app.post("/infra/eleicao/novo-lider")
     async def receber_novo_lider(mensagem: NovoLider):
         await adm.processar_novo_lider(mensagem)
         return {"ok": True}
 
+    @app.get("/infra/lider")
+    async def consultar_lider():
+        return {
+            "idServidor": adm.id_servidor,
+            "liderAtual": adm.lider_atual,
+            "souLider": adm.sou_lider(),
+        }
+
     @app.get("/estado")
     async def estado():
         return {
+            "idServidor": adm.id_servidor,
             "liderAtual": adm.lider_atual,
+            "souLider": adm.sou_lider(),
             "pedidos": list(adm.pedidos.keys()),
             "roteamento": {str(k): v for k, v in adm.mapa_pedido_servidor.items()},
             "rastreadoresAtivos": sorted(adm.servidores_rastreadores_ativos),
