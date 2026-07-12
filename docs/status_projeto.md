@@ -8,7 +8,7 @@ Ultima validacao:
 
 ```text
 pytest -q
-16 passed
+62 passed
 ```
 
 ## Documentacao
@@ -104,8 +104,8 @@ pytest -q
 - [x] Ignorar chaves invalidas em backup do SUP durante failover.
 - [x] Implementar Bully Algorithm simplificado.
 - [x] Interpretar IDs como `adm-10` corretamente na escolha do maior ID.
-- [ ] Simular multiplos ADMs em processos separados.
-- [ ] Implementar troca real de mensagens de eleicao entre ADMs.
+- [x] Simular multiplos ADMs em processos separados.
+- [x] Implementar troca real de mensagens de eleicao entre ADMs.
 - [ ] Replicar mapa pedido -> servidor rastreador entre ADMs.
 
 ## Servidor Rastreador R
@@ -169,7 +169,7 @@ pytest -q
 
 ## Demonstracao Fim a Fim
 
-- [ ] Criar script para subir ADM.
+- [x] Criar script para subir ADM.
 - [ ] Criar script para subir R1.
 - [ ] Criar script para subir R2.
 - [ ] Criar script para subir SUP de R1.
@@ -210,8 +210,8 @@ pytest -q
 ## Proximos Passos Recomendados
 
 - [ ] Criar `docker-compose.yml` do RabbitMQ.
-- [ ] Criar scripts de execucao dos componentes.
-- [ ] Implementar demo local com multiplos processos.
+- [x] Criar scripts de execucao dos componentes.
+- [x] Implementar demo local com multiplos processos.
 - [ ] Adicionar logs de apresentacao.
 - [ ] Atualizar README com roteiro final.
 
