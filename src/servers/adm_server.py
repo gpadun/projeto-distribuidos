@@ -4,6 +4,7 @@ import re
 from time import time
 from typing import Any
 from uuid import UUID
+from collections.abc import Awaitable, Callable
 
 from src.core.models import (
     AceitarPedido,
@@ -33,6 +34,7 @@ class ADMServer:
         servidores_adm: list[str] | None = None,
         support_servers: dict[str, SupportServer] | None = None,
         heartbeat_timeout: float = 10.0,
+        keepalive_sender: Callable[[str, KeepAlive], Awaitable[None]] | None = None,
     ):
         self.id_servidor = id_servidor
         self.publisher = publisher
@@ -40,6 +42,7 @@ class ADMServer:
         self.servidores_rastreadores_ativos = set(self.servidores_rastreadores)
         self.support_servers = support_servers or {}
         self.heartbeat_timeout = heartbeat_timeout
+        self.keepalive_sender = keepalive_sender
         instante_inicial = time()
 
         self.pedidos: dict[UUID, Pedido] = {}
@@ -51,6 +54,11 @@ class ADMServer:
 
         self.servidores_adm = sorted(set(servidores_adm or [id_servidor]))
         self.lider_atual = self._maior_id(self.servidores_adm)
+
+        self.servdores_adm_ativos: set[str]
+        self.servidores_adm_ativos = set(self.servidores_adm)
+        for id_adm in self.servidores_adm:
+            self.ultimo_keepalive[id_adm] = instante_inicial
 
     async def criar_pedido(self, requisicao: CriarPedido) -> Pedido:
         """Create an order and publish PedidoDisponivel for subscribed drivers."""
@@ -116,6 +124,56 @@ class ADMServer:
         ):
             self.servidores_rastreadores_ativos.add(mensagem.idServidor)
 
+        elif (
+            mensagem.tipoServidor == TipoServidor.ADM 
+            and mensagem.idServidor in self.servidores_adm
+        ):
+            self.servidores_adm_ativos.add(mensagem.idServidor)
+
+    def criar_keepalive_proprio(self) -> KeepAlive:
+        return KeepAlive(
+            idServidor=self.id_servidor,
+            tipoServidor=TipoServidor.ADM,
+            timestamp=int(time()),
+        )
+    
+    def registrar_keepalive_local(self) -> None:
+        self.ultimo_keepalive[self.id_servidor] = time()
+        self.servidores_adm_ativos.add(self.id_servidor)
+
+    def adms_com_heartbeat_expirado(self, agora: float | None = None) -> list[str]:
+        instance = time() if agora is None else agora
+        expirados = []
+
+        for id_adm in sorted(self.servidores_adm_ativos):
+            if id_adm == self.id_servidor:
+                continue # nunca considerar a si mesmo expirado aqui
+
+            ultimo = self.ultimo_keepalive.get(id_adm)
+            if ultimo is not None and instance - ultimo > self.heartbeat_timeout:
+                expirados.append(id_adm)
+
+        return expirados
+    
+    def processar_expiracao_adms(self, agora: float | None = None) -> list[str]:
+        expirados = self.adms_com_heartbeat_expirado(agora)
+        for id_adm in expirados:
+            self.servidores_adm_ativos.discard(id_adm)
+        return expirados
+    
+    async def executar_ciclo_keepalive(self) -> None:
+        self.registrar_keepalive_local()
+
+        if self.keepalive_sender is None:
+            return
+        
+        mensagem = self.criar_keepalive_proprio()
+
+        for id_adm in self.servidores_adm:
+            if id_adm == self.id_servidor:
+                continue
+            await self.keepalive_sender(id_adm, mensagem)
+    
     async def detectar_falha_servidor_rastreador(self, id_servidor: str) -> dict[UUID, str]:
         """Remove a failed tracker and redistribute its orders to active trackers."""
         self.servidores_rastreadores_ativos.discard(id_servidor)

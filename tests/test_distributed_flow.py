@@ -12,6 +12,7 @@ from src.core.models import (
     CriarPedido,
     KeepAlive,
     LocalizacaoEntregador,
+    TipoServidor,
 )
 from src.servers.adm_server import ADMServer
 from src.servers.support_server import SupportServer
@@ -215,3 +216,31 @@ def test_bully_algorithm_usa_sufixo_numerico_do_id():
     adm = ADMServer("adm-1", servidores_adm=["adm-1", "adm-2", "adm-10"])
 
     assert run(adm.iniciar_eleicao()) == "adm-10"
+
+
+def test_adm_keepalive_marca_adm_como_ativo():
+    adm = ADMServer("adm-1", servidores_adm=["adm-1", "adm-2"])
+    adm.servidores_adm_ativos.discard("adm_2")
+
+    run(adm.processar_keepalive(
+        KeepAlive(idServidor="adm-2", tipoServidor=TipoServidor.ADM, timestamp=1)
+    ))
+
+    assert "adm-2" in adm.servidores_adm_ativos
+
+
+def test_adm_executar_ciclo_keepalive_envia_para_peers():
+    envios = []
+
+    async def fake_sender(id_destino, mensagem):
+        envios.append(id_destino)
+
+    adm = ADMServer(
+        "adm-1",
+        servidores_adm=["adm-1", "adm-2", "adm-3"],
+        keepalive_sender=fake_sender,
+    )
+
+    run(adm.executar_ciclo_keepalive())
+
+    assert sorted(envios) == ["adm-2", "adm-3"]

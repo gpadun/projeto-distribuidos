@@ -57,6 +57,8 @@ def create_app(adm_server: ADMServer | None = None) -> FastAPI:
             "pedidos": list(adm.pedidos.keys()),
             "roteamento": {str(k): v for k, v in adm.mapa_pedido_servidor.items()},
             "rastreadoresAtivos": sorted(adm.servidores_rastreadores_ativos),
+            "admsAtivos": sorted(adm.servidores_adm_ativos),
+            "admsComHeartbeatExpirado": adm.adms_com_heartbeat_expirado(),
         }
 
     return app
