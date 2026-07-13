@@ -104,6 +104,39 @@ class AtualizacaoRoteamento(BaseModel):
     timestamp: int
 
 
+class TipoMensagemEleicao(str, Enum):
+    """Message kinds exchenged during Bully leader election."""
+
+    INICAR = "INCIAR"
+    RESPOSTA = "RESPOSTA"
+    NOVO_LIDER = "NOVO_LIDER"
+
+
+class IniciarEleicao(BaseModel):
+    """Sent by an ADM to higher-ID peers to start leader election."""
+
+    idServidorOrigem: str
+    timestamp: int
+    idServidorDestino: str | None = None
+    idLiderAnterior: str | None = None
+
+
+class RespostaEleicao(BaseModel):
+    """Sent by a higher-ID ADM to confirm it is alive during election."""
+
+    idServidorOrigem: str
+    idServidorDestino: str
+    timestamp: int
+
+
+class NovoLider(BaseModel):
+    """Announces the elected ADM leader to all peers"""
+
+    idServidor: str
+    timestamp: int
+    idLiderAnterior: str | None = None
+
+
 class Cliente(BaseModel):
     """Customer identity."""
 

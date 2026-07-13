@@ -10,6 +10,9 @@ from src.core.models import (
     StatusPedido,
     SubscribeRastreio,
     TipoServidor,
+    IniciarEleicao,
+    RespostaEleicao,
+    NovoLider
 )
 from src.core.serialization import to_message_dict
 
@@ -77,3 +80,22 @@ def test_serializacao_retorna_tipos_json_native():
     payload = to_message_dict(pedido)
 
     assert isinstance(payload["idPedido"], str)
+
+
+def test_iniciar_eleicao_tem_origem_e_timestamp():
+    msg = IniciarEleicao(idServidorOrigem="adm-2", timestamp=1710000100)
+    assert msg.idServidorOrigem == "adm-2"
+
+
+def test_resposta_eleicao_liga_origem_e_destino():
+    msg = RespostaEleicao(
+        idServidorOrigem="adm-3",
+        idServidorDestino="adm-2",
+        timestamp=1710000101,
+    )
+    assert msg.idServidorDestino == "adm-2"
+
+
+def test_novo_lider_anuncia_servidor():
+    msg = NovoLider(idServidor="adm-3", timestamp=1710000105)
+    assert msg.idServidor == "adm-3"

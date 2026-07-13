@@ -91,6 +91,30 @@ python main.py
 A API fica em `http://127.0.0.1:8000`, com documentacao interativa em
 `http://127.0.0.1:8000/docs`.
 
+## Demo com 3 processos ADM
+
+Esta demonstracao sobe tres instancias ADM independentes, cada uma em uma porta
+diferente, comunicando-se por HTTP (keepalive, eleicao Bully e propagacao de
+novo lider). Comandos de pedido (`CriarPedido`, `AceitarPedido`,
+`ConfirmarEntrega`) so sao aceitos pelo lider atual; os demais ADMs respondem
+com HTTP 409 e indicam qual servidor e o lider.
+
+### Pre-requisitos
+
+- Ambiente virtual ativado e dependencias instaladas (ver secao anterior).
+- Scripts em `scripts/`:
+  - `start_adm.ps1` — sobe um ADM com variaveis de ambiente corretas;
+  - `start_cluster.ps1` — abre tres terminais (adm-1, adm-2, adm-3);
+  - `demo_estado.ps1` — consulta lider e estado dos tres ADMs;
+  - `demo_pedido.ps1` — tenta criar pedido em um ADM especifico.
+
+### Subir o cluster
+
+Na raiz do projeto:
+
+```powershell
+.\scripts\start_cluster.ps1
+
 ## Endpoints principais
 
 - `POST /pedidos`: cria pedido e publica `PedidoDisponivel`;

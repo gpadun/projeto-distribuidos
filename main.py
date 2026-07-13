@@ -4,8 +4,9 @@ import uvicorn
 
 
 def main():
-    reload_enabled = os.getenv("UVICORN_RELOAD", "").lower() in {"1", "true", "yes"}
-    uvicorn.run("src.api:app", host="127.0.0.1", port=8000, reload=reload_enabled)
+    port = int(os.getenv("ADM_PORT", "8000"))
+    host = os.getenv("ADM_HOST", "127.0.0.1")
+    uvicorn.run("src.api:app", host=host, port=port, reload=False)
 
 
 if __name__ == "__main__":

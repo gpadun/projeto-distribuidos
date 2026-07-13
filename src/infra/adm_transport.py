@@ -1,0 +1,61 @@
+import httpx
+from src.core.models import KeepAlive, IniciarEleicao, RespostaEleicao, NovoLider
+from src.core.serialization import to_message_dict
+from src.servers.adm_server import ADMServer
+
+class ADMHttpTransport:
+    def __init__(self, enderecos_adm: dict[str, str], timeout: float = 2.0):
+        self.enderecos_adm = enderecos_adm
+        self.timeout = timeout
+
+    def _url(self, id_destino: str, path: str) -> str:
+        base = self.enderecos_adm[id_destino].rstrip("/")
+        return f"{base}{path}"
+
+    async def enviar_keepalive(self, id_destino: str, mensagem: KeepAlive) -> None:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            await client.post(
+                self._url(id_destino, "/infra/keepalive"),
+                json=to_message_dict(mensagem),
+            )
+
+    async def enviar_eleicao(
+        self,
+        id_destino: str,
+        mensagem: IniciarEleicao | RespostaEleicao | NovoLider,
+    ) -> None:
+        if isinstance(mensagem, IniciarEleicao):
+            path = "/infra/eleicao/iniciar"
+        elif isinstance(mensagem, RespostaEleicao):
+            path = "/infra/eleicao/resposta"
+        else:
+            path = "/infra/eleicao/novo-lider"
+
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            await client.post(
+                self._url(id_destino, path),
+                json=to_message_dict(mensagem),
+            )
+
+
+def criar_adm_com_transporte_http(
+    id_servidor: str,
+    enderecos_adm: dict[str, str],
+    servidores_adm: list[str],
+    **kwargs,
+) -> ADMServer:
+    transport = ADMHttpTransport(enderecos_adm)
+
+    adm = ADMServer(
+        id_servidor=id_servidor,
+        servidores_adm=servidores_adm,
+        keepalive_sender=transport.enviar_keepalive,
+        election_sender=transport.enviar_eleicao,
+        **kwargs,
+    )
+
+    async def on_lider_caiu(_: str):
+        await adm.iniciar_eleicao()
+
+    adm.on_lider_caiu = on_lider_caiu
+    return adm
