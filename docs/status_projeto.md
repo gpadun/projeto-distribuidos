@@ -66,7 +66,7 @@ pytest -q
 - [x] Reutilizar conexao RabbitMQ aberta ao recriar canal fechado.
 - [x] Tratar erro de payload/callback no subscriber com `basic_nack`.
 - [x] Rejeitar payload JSON que nao seja objeto no subscriber.
-- [ ] Criar `docker-compose.yml` para RabbitMQ.
+- [x] Criar `docker-compose.yml` para RabbitMQ.
 - [ ] Validar publicacao real usando RabbitMQ rodando.
 - [ ] Validar assinatura real usando RabbitMQ rodando.
 - [ ] Documentar painel RabbitMQ e credenciais.
@@ -209,7 +209,7 @@ pytest -q
 
 ## Proximos Passos Recomendados
 
-- [ ] Criar `docker-compose.yml` do RabbitMQ.
+- [x] Criar `docker-compose.yml` do RabbitMQ.
 - [x] Criar scripts de execucao dos componentes.
 - [x] Implementar demo local com multiplos processos.
 - [ ] Adicionar logs de apresentacao.
