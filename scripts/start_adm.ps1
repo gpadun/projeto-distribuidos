@@ -28,6 +28,11 @@ $env:ADM_PEERS = $peers
 $env:ADM_HEARTBEAT_INTERVAL = "5"
 $env:ADM_MONITOR_ENABLED = "1"
 $env:ADM_HEARTBEAT_TIMEOUT = "10"
+$env:RABBITMQ_ENABLED = "1"
+$env:RABBITMQ_HOST = "127.0.0.1"
+$env:RABBITMQ_PORT = "5672"
+$env:RABBITMQ_USER = "dsid"
+$env:RABBITMQ_PASSWORD = "dsid123"
 
 Write-Host "Subindo $AdmId em http://127.0.0.1:$Port"
 Write-Host "Peers: $peers"

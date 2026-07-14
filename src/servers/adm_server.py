@@ -25,6 +25,14 @@ from src.core.routing import escolher_servidor_consistent_hash
 from src.core.serialization import to_message_dict
 from src.servers.support_server import SupportServer
 
+from src.broker.topology import (
+    EXCHANGE_INFRA,
+    EXCHANGE_PEDIDOS,
+    ROUTING_PEDIDO_DISPONIVEL,
+    routing_entrega_confirmada,
+    routing_roteamento,
+)
+
 
 class NaoELiderError(Exception):
     """Raised when a non-leader ADM tries to process a leader-only command."""
@@ -103,7 +111,7 @@ class ADMServer:
             idRestaurante=pedido.idRestaurante,
             timestamp=pedido.timestamp,
         )
-        self._publish("pedidos", "pedido.disponivel", evento)
+        self._publish(EXCHANGE_PEDIDOS, ROUTING_PEDIDO_DISPONIVEL, evento)
         return pedido
 
     async def aceitar_pedido(self, requisicao: AceitarPedido) -> Pedido:
@@ -125,7 +133,7 @@ class ADMServer:
             idServidorRastreador=servidor,
             timestamp=requisicao.timestamp,
         )
-        self._publish("infra", f"roteamento.{servidor}", atualizacao)
+        self._publish(EXCHANGE_INFRA, routing_roteamento(servidor), atualizacao)
         return pedido
 
     async def confirmar_entrega(self, requisicao: ConfirmarEntrega) -> EntregaConfirmada:
@@ -138,7 +146,11 @@ class ADMServer:
             raise ValueError("cliente nao corresponde ao pedido")
 
         evento = EntregaConfirmada(idPedido=requisicao.idPedido, timestamp=requisicao.timestamp)
-        self._publish("pedidos", f"pedido.{requisicao.idPedido}.entrega_confirmada", evento)
+        self._publish(
+            EXCHANGE_PEDIDOS,
+            routing_entrega_confirmada(requisicao.idPedido),
+            evento,
+        )
         self.pedidos.pop(requisicao.idPedido, None)
         self.pedidos_sem_entregador.pop(requisicao.idPedido, None)
         self.mapa_pedido_servidor.pop(requisicao.idPedido, None)
@@ -234,8 +246,8 @@ class ADMServer:
                 pedido.servidorRastreadorResponsavel = novo_servidor
             redistribuidos[id_pedido] = novo_servidor
             self._publish(
-                "infra",
-                f"roteamento.{novo_servidor}",
+                EXCHANGE_INFRA,
+                routing_roteamento(novo_servidor),
                 AtualizacaoRoteamento(
                     idPedido=id_pedido,
                     idServidorRastreador=novo_servidor,
