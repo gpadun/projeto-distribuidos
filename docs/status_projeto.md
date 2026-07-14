@@ -8,7 +8,16 @@ Ultima validacao:
 
 ```text
 pytest -q
-62 passed
+75 passed
+
+# sem RabbitMQ (docker compose stop):
+# 72 passed, 3 skipped
+
+pytest -q -m integration
+3 passed
+
+# sem RabbitMQ:
+# 3 skipped
 ```
 
 ## Documentacao
@@ -18,9 +27,9 @@ pytest -q
 - [x] Atualizar `docs/especificacao.md` para seguir o PDF.
 - [x] Atualizar `README.md` com a arquitetura atual.
 - [x] Criar este checklist de acompanhamento.
-- [ ] Adicionar no README um roteiro completo de apresentacao.
+- [x] Adicionar no README um roteiro completo de apresentacao.
 - [ ] Adicionar no README comandos para rodar todos os componentes.
-- [ ] Adicionar no README como simular falha de servidor.
+- [x] Adicionar no README como simular falha de servidor.
 
 ## Contratos de Dados
 
@@ -69,7 +78,7 @@ pytest -q
 - [x] Criar `docker-compose.yml` para RabbitMQ.
 - [x] Validar publicacao real usando RabbitMQ rodando.
 - [x] Validar assinatura real usando RabbitMQ rodando.
-- [ ] Documentar painel RabbitMQ e credenciais.
+- [x] Documentar painel RabbitMQ e credenciais.
 
 ## API Sincrona
 
@@ -213,11 +222,11 @@ pytest -q
 - [x] Criar scripts de execucao dos componentes.
 - [x] Implementar demo local com multiplos processos.
 - [ ] Adicionar logs de apresentacao.
-- [ ] Atualizar README com roteiro final.
+- [x] Atualizar README com roteiro final.
 
 ## Observacoes
 
 - [x] Projeto correto como prova de conceito em memoria seguindo o PDF.
 - [x] Testes atuais passando.
-- [ ] Ainda falta demonstracao distribuida real com varios processos e RabbitMQ.
-- [ ] Atualizar este checklist sempre que uma etapa nova for implementada.
+- [x] Demo ADM com 3 processos e RabbitMQ real implementadas; falta E2E completo (R, SUP, cliente e entregador via broker).
+- [x] Atualizar este checklist sempre que uma etapa nova for implementada.

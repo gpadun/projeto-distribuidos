@@ -17,14 +17,19 @@ Prova de conceito para a disciplina de Sistemas Distribuidos. O sistema combina:
 ```text
 src/
   api.py                 # API FastAPI para comandos sincronos
+  broker/
+    config.py            # Configuracao RabbitMQ via env vars
+    topology.py          # Exchanges e routing keys
+    factory.py           # Factory de Publisher/Subscriber
+    connection.py        # Conexao RabbitMQ
+    publisher.py         # Publicacao em exchanges topic
+    subscriber.py        # Assinatura de topicos
+  infra/
+    adm_transport.py     # Transporte HTTP entre ADMs
   core/
     models.py            # Contratos de mensagens e entidades
     routing.py           # Hash deterministico de roteamento
     serialization.py     # Compatibilidade Pydantic v1/v2
-  broker/
-    connection.py        # Conexao RabbitMQ
-    publisher.py         # Publicacao em exchanges topic
-    subscriber.py        # Assinatura de topicos
   servers/
     adm_server.py        # Coordenacao, pedidos, heartbeats e eleicao
     tracker_server.py    # Rastreio e publicacao de localizacao
@@ -32,13 +37,21 @@ src/
   clients/
     mock_customer.py     # Simulador de cliente
     mock_driver.py       # Simulador de entregador
+scripts/
+  start_adm.ps1          # Sobe um ADM
+  start_cluster.ps1      # Sobe cluster de 3 ADMs
+  demo_estado.ps1        # Consulta estado dos ADMs
+  demo_pedido.ps1        # Testa criacao de pedido
 tests/
   test_routing.py
   test_models.py
   test_distributed_flow.py
+  test_broker_integration.py
+docker-compose.yml       # RabbitMQ local
 docs/
   especificacao.md
   spec.md
+  status_projeto.md
 ```
 
 A dependencia entre camadas segue uma direcao unica: `servers/` e `clients/`
@@ -82,6 +95,10 @@ Rode os testes:
 pytest -q
 ```
 
+Com RabbitMQ rodando (`docker compose up -d`), a suite completa passa com
+**75 testes**. Sem o broker, os 3 testes de integracao sao pulados
+(**72 passed, 3 skipped**).
+
 Suba a API:
 
 ```bash
@@ -102,6 +119,7 @@ com HTTP 409 e indicam qual servidor e o lider.
 ### Pre-requisitos
 
 - Ambiente virtual ativado e dependencias instaladas (ver secao anterior).
+- RabbitMQ rodando (`docker compose up -d`) para publicar eventos reais.
 - Scripts em `scripts/`:
   - `start_adm.ps1` — sobe um ADM com variaveis de ambiente corretas;
   - `start_cluster.ps1` — abre tres terminais (adm-1, adm-2, adm-3);
@@ -114,18 +132,243 @@ Na raiz do projeto:
 
 ```powershell
 .\scripts\start_cluster.ps1
+```
+
+Isso inicia:
+
+| ADM   | URL                      | Docs Swagger               |
+|-------|--------------------------|----------------------------|
+| adm-1 | http://127.0.0.1:8001    | http://127.0.0.1:8001/docs |
+| adm-2 | http://127.0.0.1:8002    | http://127.0.0.1:8002/docs |
+| adm-3 | http://127.0.0.1:8003    | http://127.0.0.1:8003/docs |
+
+Aguarde **5 a 10 segundos** para os heartbeats entre os ADMs. Depois confira:
+
+```powershell
+.\scripts\demo_estado.ps1
+```
+
+Estado esperado no inicio (maior ID vira lider):
+
+| ADM   | souLider | liderAtual |
+|-------|----------|------------|
+| adm-1 | false    | adm-3      |
+| adm-2 | false    | adm-3      |
+| adm-3 | true     | adm-3      |
+
+### Cenario 1 — operacao normal
+
+**1. Consultar o lider:**
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8001/infra/lider
+Invoke-RestMethod http://127.0.0.1:8003/infra/lider
+```
+
+**2. Tentar criar pedido em um ADM que nao e lider (deve retornar 409):**
+
+```powershell
+.\scripts\demo_pedido.ps1 -Url "http://127.0.0.1:8001"
+```
+
+**3. Criar pedido no lider (deve retornar 200):**
+
+```powershell
+.\scripts\demo_pedido.ps1 -Url "http://127.0.0.1:8003"
+```
+
+**4. Inspecionar o estado do lider:**
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8003/estado
+```
+
+O campo `pedidos` deve listar o UUID criado. Com RabbitMQ ativo, `rabbitmqHabilitado`
+deve ser `true`.
+
+### Cenario 2 — falha do lider e nova eleicao
+
+**1. Encerre o processo do lider (`adm-3`)** — feche o terminal ou use Ctrl+C.
+
+**2. Aguarde cerca de 10 a 15 segundos** para o timeout de heartbeat e a nova
+eleicao (intervalo de monitoramento: 5 s; timeout de heartbeat: 10 s).
+
+**3. Verifique o novo lider:**
+
+```powershell
+.\scripts\demo_estado.ps1
+```
+
+Estado esperado apos a falha:
+
+| ADM   | souLider | liderAtual |
+|-------|----------|------------|
+| adm-1 | false    | adm-2      |
+| adm-2 | true     | adm-2      |
+| adm-3 | offline  | —          |
+
+**4. Criar pedido no novo lider:**
+
+```powershell
+.\scripts\demo_pedido.ps1 -Url "http://127.0.0.1:8002"
+```
+
+**5. Confirmar que adm-1 ainda rejeita o comando:**
+
+```powershell
+.\scripts\demo_pedido.ps1 -Url "http://127.0.0.1:8001"
+```
+
+Deve retornar 409 com `liderAtual: adm-2`.
+
+### Subir um ADM manualmente (alternativa)
+
+Em vez de `start_cluster.ps1`, abra tres terminais e configure as variaveis
+conforme `scripts/start_adm.ps1`.
+
+## RabbitMQ (Message Broker)
+
+O sistema usa **RabbitMQ** com exchanges do tipo **topic** para eventos
+assincronos. Comandos de pedido continuam via HTTP/FastAPI; eventos como
+`PedidoDisponivel` vao pelo broker.
+
+### Subir o broker
+
+Requisito: [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+instalado.
+
+Na raiz do projeto:
+
+```powershell
+docker compose up -d
+docker compose ps
+```
+
+O container `dsid-rabbitmq` deve ficar `healthy`.
+
+### Painel de administracao
+
+| Item    | Valor                        |
+|---------|------------------------------|
+| URL     | http://localhost:15672       |
+| Usuario | `dsid`                       |
+| Senha   | `dsid123`                    |
+
+No painel voce pode inspecionar exchanges, filas e mensagens publicadas durante
+a demo.
+
+### Variaveis de ambiente
+
+Copie `.env.example` para `.env` (opcional):
+
+```powershell
+Copy-Item .env.example .env
+```
+
+| Variavel                  | Descricao                                | Padrao                   |
+|---------------------------|------------------------------------------|--------------------------|
+| `RABBITMQ_HOST`           | Host do broker                           | `localhost`              |
+| `RABBITMQ_PORT`           | Porta AMQP                               | `5672`                   |
+| `RABBITMQ_USER`           | Usuario                                  | `dsid`                   |
+| `RABBITMQ_PASSWORD`       | Senha                                    | `dsid123`                |
+| `RABBITMQ_ENABLED`        | `1` conecta o ADM ao broker; `0` desliga | `0`                      |
+| `RABBITMQ_MANAGEMENT_URL` | URL do painel web                        | `http://localhost:15672` |
+
+Os scripts `start_adm.ps1` e `start_cluster.ps1` ja definem `RABBITMQ_ENABLED=1`.
+
+### Topologia de mensagens
+
+| Exchange   | Routing key                        | Publicado por | Consumido por (futuro) |
+|------------|------------------------------------|---------------|------------------------|
+| `pedidos`  | `pedido.disponivel`                | ADM (lider)   | Entregador             |
+| `pedidos`  | `pedido.{id}.entrega_confirmada`   | ADM (lider)   | Entregador             |
+| `infra`    | `roteamento.{servidor_rastreador}` | ADM (lider)   | Rastreador R           |
+| `rastreio` | `pedido.{id}`                      | Rastreador R  | Cliente                |
+| `rastreio` | `pedido.{id}.desconexao`           | Rastreador R  | Cliente / ADM          |
+
+Definicoes centralizadas em `src/broker/topology.py`.
+
+### Validar publicacao manual
+
+Com RabbitMQ e ADM lider rodando (`RABBITMQ_ENABLED=1`):
+
+```powershell
+.\scripts\demo_pedido.ps1 -Url "http://127.0.0.1:8003"
+```
+
+No painel RabbitMQ, aba **Exchanges**, deve aparecer a exchange `pedidos` apos o
+primeiro pedido.
+
+### Testes com RabbitMQ real
+
+Testes de integracao (exigem broker rodando):
+
+```powershell
+docker compose up -d
+pytest -q -m integration
+```
+
+Esperado: **3 passed**.
+
+Suite completa:
+
+```powershell
+pytest -q
+```
+
+Esperado: **75 passed** (com Docker) ou **72 passed, 3 skipped** (sem Docker).
+
+Rodar sem integracao:
+
+```powershell
+pytest -q -m "not integration"
+```
+
+### Comandos uteis do Docker
+
+```powershell
+docker compose stop      # parar broker
+docker compose start     # subir novamente
+docker compose down      # remover container (volume permanece)
+docker compose down -v   # remover container e dados
+docker compose logs -f rabbitmq
+```
 
 ## Endpoints principais
 
+### Comandos (somente no lider ADM)
+
 - `POST /pedidos`: cria pedido e publica `PedidoDisponivel`;
 - `POST /pedidos/aceitar`: associa entregador e servidor rastreador;
-- `POST /pedidos/confirmar`: confirma entrega e publica `EntregaConfirmada`;
+- `POST /pedidos/confirmar`: confirma entrega e publica `EntregaConfirmada`.
+
+Resposta **409** em nao-lideres, com `liderAtual` no corpo.
+
+### Infraestrutura ADM
+
 - `POST /infra/keepalive`: registra heartbeat;
-- `POST /infra/eleicao`: executa eleicao Bully simplificada;
-- `GET /estado`: inspeciona o estado atual do ADM.
+- `POST /infra/eleicao`: executa eleicao Bully;
+- `POST /infra/eleicao/iniciar`: recebe inicio de eleicao;
+- `POST /infra/eleicao/resposta`: recebe resposta de eleicao;
+- `POST /infra/eleicao/novo-lider`: propaga novo lider;
+- `GET /infra/lider`: consulta lider atual;
+- `GET /estado`: inspeciona estado do ADM (inclui `rabbitmqHabilitado`).
 
-## Observacao sobre RabbitMQ
+Documentacao interativa: `http://127.0.0.1:8000/docs` (ou porta do ADM).
 
-Os modulos em `src/broker/` estao prontos para RabbitMQ real. Os testes usam
-publicadores injetaveis em memoria para validar a logica sem exigir Docker ou
-broker ativo.
+## Roteiro rapido de apresentacao (5 minutos)
+
+1. `docker compose up -d` — mostrar painel em `:15672`
+2. `.\scripts\start_cluster.ps1` — 3 ADMs
+3. `.\scripts\demo_estado.ps1` — lider inicial `adm-3`
+4. `.\scripts\demo_pedido.ps1` no adm-1 → 409; no adm-3 → 200
+5. Painel RabbitMQ → exchange `pedidos` com mensagem
+6. Matar adm-3 → aguardar 15s → novo lider `adm-2`
+7. Criar pedido no adm-2 → sucesso
+
+## O que ainda nao esta nesta versao
+
+- Processos separados para R1, R2 e SUP
+- Cliente e entregador consumindo/publicando via RabbitMQ
+- Demo E2E completa (pedido → rastreio → confirmacao)
+- Replicacao do mapa pedido → rastreador entre ADMs
