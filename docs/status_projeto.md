@@ -67,8 +67,8 @@ pytest -q
 - [x] Tratar erro de payload/callback no subscriber com `basic_nack`.
 - [x] Rejeitar payload JSON que nao seja objeto no subscriber.
 - [x] Criar `docker-compose.yml` para RabbitMQ.
-- [ ] Validar publicacao real usando RabbitMQ rodando.
-- [ ] Validar assinatura real usando RabbitMQ rodando.
+- [x] Validar publicacao real usando RabbitMQ rodando.
+- [x] Validar assinatura real usando RabbitMQ rodando.
 - [ ] Documentar painel RabbitMQ e credenciais.
 
 ## API Sincrona
@@ -164,7 +164,7 @@ pytest -q
 - [x] Testar reuso de conexao RabbitMQ ao recriar canal.
 - [x] Testar heartbeat usando tempo local.
 - [x] Testar ordem estavel de heartbeats expirados.
-- [ ] Testar broker real com RabbitMQ.
+- [x] Testar broker real com RabbitMQ.
 - [ ] Testar cenario de falha com processos reais.
 
 ## Demonstracao Fim a Fim

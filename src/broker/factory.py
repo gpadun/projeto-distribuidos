@@ -86,4 +86,11 @@ def fechar_subscriber(subscriber: Subscriber | None) -> None:
     """Close the underlying RabbitMQ connection owned by a subscriber."""
     if subscriber is None:
         return
-    subscriber.broker_connection.close()
+    connection = subscriber.broker_connection
+    channel = connection.channel
+    if channel is not None and channel.is_open:
+        try:
+            channel.stop_consuming()
+        except Exception:
+            pass
+    connection.close()

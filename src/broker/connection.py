@@ -52,6 +52,9 @@ class BrokerConnection:
     def close(self) -> None:
         """Close the broker connection."""
         if self.connection and self.connection.is_open:
-            self.connection.close()
+            try:
+                self.connection.close()
+            except Exception:
+                pass
         self.connection = None
         self.channel = None
