@@ -210,3 +210,12 @@ def test_api_recebe_novo_lider():
     assert response.status_code == 200
     assert adm.lider_atual == "adm-2"
     assert adm.aguardando_eleicao is False
+
+
+def test_criar_adm_padrao_recebe_publisher_injetado():
+    publisher = object()
+    from src.api import _criar_adm_padrao
+
+    adm = _criar_adm_padrao(publisher)
+
+    assert adm.publisher is publisher

@@ -6,6 +6,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 
+from src.broker.factory import criar_publisher, fechar_publisher
+from src.broker.publisher import Publisher
 from src.core.models import (
     AceitarPedido,
     ConfirmarEntrega,
@@ -30,26 +32,32 @@ def parse_adm_peers(raw: str) -> dict[str, str]:
     return enderecos
 
 
-def _criar_adm_padrao() -> ADMServer:
+def _criar_adm_padrao(publisher: Publisher | None) -> ADMServer:
+    """Build the default ADM instance for this process."""
     id_servidor = os.getenv("ADM_ID", "adm-1")
     servidores_adm = [
         servidor.strip()
         for servidor in os.getenv("ADM_CLUSTER", "adm-1,adm-2,adm-3").split(",")
         if servidor.strip()
     ]
+    servidores_rastreadores = ["rastreador-1", "rastreador-2"]
     peers_raw = os.getenv("ADM_PEERS", "")
     enderecos = parse_adm_peers(peers_raw) if peers_raw else {}
+
     if enderecos:
         return criar_adm_com_transporte_http(
             id_servidor=id_servidor,
             enderecos_adm=enderecos,
             servidores_adm=servidores_adm,
-            servidores_rastreadores=["rastreador-1", "rastreador-2"],
+            servidores_rastreadores=servidores_rastreadores,
+            publisher=publisher,
         )
+
     return ADMServer(
         id_servidor=id_servidor,
         servidores_adm=servidores_adm,
-        servidores_rastreadores=["rastreador-1", "rastreador-2"],
+        servidores_rastreadores=servidores_rastreadores,
+        publisher=publisher,
     )
 
 
@@ -72,7 +80,13 @@ def _http_exception_nao_lider(exc: NaoELiderError) -> HTTPException:
 
 def create_app(adm_server: ADMServer | None = None) -> FastAPI:
     """Create an API app backed by one ADMServer instance."""
-    adm = adm_server or _criar_adm_padrao()
+    app_publisher = None
+
+    if adm_server is None:
+        app_publisher = criar_publisher()
+        adm = _criar_adm_padrao(app_publisher)
+    else:
+        adm = adm_server
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -91,6 +105,7 @@ def create_app(adm_server: ADMServer | None = None) -> FastAPI:
                 await task
             except asyncio.CancelledError:
                 pass
+            fechar_publisher(app_publisher)
 
     monitor_enabled = os.getenv("ADM_MONITOR_ENABLED", "1") == "1"
     use_lifespan = monitor_enabled and adm_server is None
@@ -174,6 +189,7 @@ def create_app(adm_server: ADMServer | None = None) -> FastAPI:
             "liderDisponivel": adm.lider_disponivel,
             "aguardandoEleicao": adm.aguardando_eleicao,
             "idLiderAnterior": adm.id_lider_anterior,
+            "rabbitmqHabilitado": app_publisher is not None,
         }
 
     return app
