@@ -20,6 +20,7 @@ from src.broker.topology import (
     EXCHANGE_PEDIDOS,
     ROUTING_ENTREGA_CONFIRMADA,
     ROUTING_PEDIDO_DISPONIVEL,
+    ROUTING_RASTREADOR_ATUALIZADO,
     routing_localizacao_para_rastreador,
 )
 from src.core.models import (
@@ -94,12 +95,29 @@ def criar_callback_entrega_confirmada(
     return callback
 
 
+def criar_callback_rastreador_atualizado(
+    rastreador_por_pedido: dict[UUID, str],
+):
+    """Build the RabbitMQ callback that updates GPS routing after ADM failover."""
+
+    def callback(payload: dict) -> None:
+        id_pedido = UUID(str(payload["idPedido"]))
+        novo_rastreador = payload["idServidorRastreador"]
+        rastreador_por_pedido[id_pedido] = novo_rastreador
+        print(
+            f"[entregador] rastreador atualizado pedido={id_pedido} -> {novo_rastreador}"
+        )
+
+    return callback
+
+
 def criar_callback_pedido_disponivel(
     id_entregador: str,
     adm_url: str,
     aceitar_automatico: bool,
     broker_settings: BrokerSettings,
     parar_gps: dict[UUID, threading.Event],
+    rastreador_por_pedido: dict[UUID, str],
     intervalo_gps: float = 2.0,
 ):
     """Build the RabbitMQ callback for PedidoDisponivel events."""
@@ -131,16 +149,17 @@ def criar_callback_pedido_disponivel(
 
         parar = threading.Event()
         parar_gps[evento.idPedido] = parar
+        rastreador_por_pedido[evento.idPedido] = id_rastreador
 
         thread = threading.Thread(
             target=_publicar_localizacoes_periodicas,
             args=(
                 id_entregador,
                 evento.idPedido,
-                id_rastreador,
                 intervalo_gps,
                 broker_settings,
                 parar,
+                rastreador_por_pedido,
             ),
             daemon=True,
         )
@@ -169,6 +188,7 @@ def executar_entregador_broker(
         raise DriverBrokerError("nao foi possivel criar subscriber RabbitMQ")
 
     parar_gps: dict[UUID, threading.Event] = {}
+    rastreador_por_pedido: dict[UUID, str] = {}
 
     callback = criar_callback_pedido_disponivel(
         id_entregador=id_entregador,
@@ -176,6 +196,7 @@ def executar_entregador_broker(
         aceitar_automatico=aceitar_automatico,
         broker_settings=settings,
         parar_gps=parar_gps,
+        rastreador_por_pedido=rastreador_por_pedido,
         intervalo_gps=intervalo_gps,
     )
 
@@ -185,9 +206,15 @@ def executar_entregador_broker(
         ROUTING_ENTREGA_CONFIRMADA,
         criar_callback_entrega_confirmada(parar_gps),
     )
+    subscriber.subscribe(
+        EXCHANGE_PEDIDOS,
+        ROUTING_RASTREADOR_ATUALIZADO,
+        criar_callback_rastreador_atualizado(rastreador_por_pedido),
+    )
     print(
         f"[entregador] ouvindo {EXCHANGE_PEDIDOS}/{ROUTING_PEDIDO_DISPONIVEL}, "
-        f"{EXCHANGE_PEDIDOS}/{ROUTING_ENTREGA_CONFIRMADA} "
+        f"{EXCHANGE_PEDIDOS}/{ROUTING_ENTREGA_CONFIRMADA}, "
+        f"{EXCHANGE_PEDIDOS}/{ROUTING_RASTREADOR_ATUALIZADO} "
         f"como {id_entregador}; ADM={adm_url}"
     )
 
@@ -202,10 +229,10 @@ def executar_entregador_broker(
 def _publicar_localizacoes_periodicas(
     id_entregador: str,
     id_pedido: UUID,
-    id_rastreador: str,
     intervalo_segundos: float,
     broker_settings: BrokerSettings,
     parar_event: threading.Event,
+    rastreador_por_pedido: dict[UUID, str],
 ) -> None:
     publisher = criar_publisher(broker_settings)
     if publisher is None:
@@ -216,6 +243,12 @@ def _publicar_localizacoes_periodicas(
 
     try:
         while not parar_event.is_set():
+            id_rastreador = rastreador_por_pedido.get(id_pedido)
+            if not id_rastreador:
+                if parar_event.wait(timeout=intervalo_segundos):
+                    break
+                continue
+
             latitude += random.uniform(-0.001, 0.001)
             longitude += random.uniform(-0.001, 0.001)
             localizacao = LocalizacaoEntregador(

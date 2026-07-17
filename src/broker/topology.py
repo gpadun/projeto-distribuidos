@@ -9,6 +9,7 @@ EXCHANGE_LOCALIZACAO = "localizacao"
 
 ROUTING_PEDIDO_DISPONIVEL = "pedido.disponivel"
 ROUTING_ENTREGA_CONFIRMADA = "pedido.*.entrega_confirmada"
+ROUTING_RASTREADOR_ATUALIZADO = "pedido.*.rastreador_atualizado"
 
 
 def routing_entrega_confirmada(id_pedido: UUID | str) -> str:
@@ -34,3 +35,8 @@ def routing_desconexao(id_pedido: UUID | str) -> str:
 def routing_localizacao_para_rastreador(id_servidor_rastreador: str) -> str:
     """Routing key for LocalizacaoEntregadore directed to one tracker."""
     return f"rastreador.{id_servidor_rastreador}"
+
+
+def routing_rastreador_atualizado(id_pedido: UUID | str) -> str:
+    """Routing key when ADM ressigns an order to another tracker."""
+    return f"pedido.{id_pedido}.rastreador_atualizado"

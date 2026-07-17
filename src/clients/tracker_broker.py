@@ -4,6 +4,7 @@ import asyncio
 import os
 import threading
 import time
+import httpx
 
 from src.broker.config import BrokerSettings
 from src.broker.factory import criar_publisher, criar_subscriber, fechar_publisher, fechar_subscriber
@@ -13,7 +14,8 @@ from src.broker.topology import (
     routing_localizacao_para_rastreador,
     routing_roteamento
 )
-from src.core.models import AtualizacaoRoteamento, LocalizacaoEntregador
+from src.core.models import AtualizacaoRoteamento, LocalizacaoEntregador, KeepAlive, TipoServidor
+from src.core.serialization import to_message_dict
 from src.servers.tracker_server import TrackerServer
 
 
@@ -40,6 +42,23 @@ def criar_callback_localizacao(tracker: TrackerServer):
     return callback
 
 
+def _carregar_adm_urls() -> list[str]:
+    """Return all ADM base URLs that should receive tracker keepalive."""
+    raw = os.getenv("ADM_URLS", "")
+    if raw.strip():
+        return [url.strip() for url in raw.split(",") if url.strip()]
+
+    fallback = os.getenv("ADM_URL")
+    if fallback:
+        return [fallback.strip()]
+
+    return [
+        "http://127.0.0.1:8001",
+        "http://127.0.0.1:8002",
+        "http://127.0.0.1:8003",
+    ]
+
+
 def executar_rastreador_broker(
     id_servidor: str,
     broker_settings: BrokerSettings | None = None,
@@ -54,6 +73,23 @@ def executar_rastreador_broker(
         raise TrackerBrokerError("nao foi possivel criar publisher RabbitMQ")
     
     tracker = TrackerServer(id_servidor=id_servidor, publisher=publisher)
+
+    adm_urls = _carregar_adm_urls()
+    sup_url = os.getenv("SUP_URL")
+    intervalo = float(os.getenv("TRACKER_HEARTBEAT_INTERVAL", "5"))
+
+    threading.Thread(
+        target=_enviar_keepalive_periodico,
+        args=(id_servidor, adm_urls, intervalo),
+        daemon=True,
+    ).start()
+
+    if sup_url:
+        threading.Thread(
+            target=_sincronizar_sup_periodico,
+            args=(tracker, sup_url, intervalo),
+            daemon=True,
+        ).start()
 
     subscriber_roteamento = criar_subscriber(settings)
     subscriber_localizacao = criar_subscriber(settings)
@@ -78,7 +114,8 @@ def executar_rastreador_broker(
     print(
         f"[rastreador {id_servidor}] ouvindo "
         f"{EXCHANGE_INFRA}/{routing_roteamento_key} e "
-        f"{EXCHANGE_LOCALIZACAO}/{routing_localizacao_key}"
+        f"{EXCHANGE_LOCALIZACAO}/{routing_localizacao_key}; "
+        f"keepalive ADMs={', '.join(adm_urls)}"
     )
 
     errors: list[Exception] = []
@@ -115,3 +152,42 @@ def executar_rastreador_broker(
         fechar_publisher(publisher)
         thread_roteamento.join(timeout=1)
         thread_localizacao.join(timeout=1)
+
+
+def _enviar_keepalive_periodico(
+    id_servidor: str,
+    adm_urls: list[str],
+    intervalo: float,
+) -> None:
+    while True:
+        mensagem = KeepAlive(
+            idServidor=id_servidor,
+            tipoServidor=TipoServidor.RASTREADOR,
+            timestamp=int(time.time()),
+        )
+        payload = to_message_dict(mensagem)
+
+        for adm_url in adm_urls:
+            try:
+                with httpx.Client(timeout=5.0) as client:
+                    client.post(
+                        f"{adm_url.rstrip('/')}/infra/keepalive",
+                        json=payload,
+                    )
+            except Exception as exc:
+                print(
+                    f"[rastreador {id_servidor}] erro keepalive em {adm_url}: {exc}"
+                )
+
+        time.sleep(intervalo)
+
+
+def _sincronizar_sup_periodico(tracker: TrackerServer, sup_url: str, intervalo: float) -> None:
+    while True:
+        try:
+            snapshot = tracker.snapshot_rastreios()
+            with httpx.Client(timeout=5.0) as client:
+                client.post(f"{sup_url.rstrip('/')}/sync", json=snapshot)
+        except Exception as exc:
+            print(f"[rastreador {tracker.id_servidor}] erro sync SUP: {exc}")
+        time.sleep(intervalo)

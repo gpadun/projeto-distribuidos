@@ -1,7 +1,7 @@
 param(
     [string]$IdCliente = "cliente-1",
     [string]$IdRestaurante = "restaurante-1",
-    [string]$AdmUrl = "http://127.0.0.1:8003",
+    [string]$AdmUrl = "",
     [ValidateSet("criar", "rastrear", "demo", "confirmar")]
     [string]$Acao = "demo",
     [string]$IdPedido = ""
@@ -11,6 +11,9 @@ $ErrorActionPreference = "Stop"
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $projectRoot
+
+. (Join-Path $PSScriptRoot "resolve_adm_lider.ps1")
+$AdmUrl = Resolve-AdmLiderUrl -AdmUrl $AdmUrl
 
 $env:RABBITMQ_ENABLED = "1"
 $env:RABBITMQ_HOST = "127.0.0.1"

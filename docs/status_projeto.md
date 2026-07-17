@@ -8,10 +8,10 @@ Ultima validacao:
 
 ```text
 pytest -q
-75 passed
+91 passed
 
 # sem RabbitMQ (docker compose stop):
-# 72 passed, 3 skipped
+# 88 passed, 3 skipped
 
 pytest -q -m integration
 3 passed
@@ -128,16 +128,16 @@ pytest -q -m integration
 - [x] Rodar R como processo proprio.
 - [x] Consumir `LocalizacaoEntregador` real via RabbitMQ.
 - [x] Encaminhar eventos reais para cliente via RabbitMQ.
-- [ ] Enviar `KeepAlive` periodico ao ADM.
+- [x] Enviar `KeepAlive` periodico ao ADM.
 
 ## Servidor SUP
 
 - [x] Manter backup dos rastreios de um R associado.
 - [x] Retornar lista de backup ao ADM.
 - [x] Guardar horario do ultimo sync.
-- [ ] Rodar SUP como processo proprio.
-- [ ] Receber sincronizacao real do R via mensagem ou endpoint.
-- [ ] Avisar/atender ADM em cenario real de falha.
+- [x] Rodar SUP como processo proprio.
+- [x] Receber sincronizacao real do R via mensagem ou endpoint.
+- [x] Avisar/atender ADM em cenario real de falha.
 
 ## Clientes Mock
 
@@ -148,8 +148,8 @@ pytest -q -m integration
 - [x] Gerar coordenadas falsas.
 - [x] Enviar localizacoes periodicas quando conectado a um Tracker injetado.
 - [x] Fazer mock customer assinar rastreio real via RabbitMQ.
-- [ ] Fazer mock driver publicar `LocalizacaoEntregador` real via RabbitMQ.
-- [ ] Criar modo de demo com comandos simples.
+- [x] Fazer mock driver publicar `LocalizacaoEntregador` real via RabbitMQ.
+- [x] Criar modo de demo com comandos simples.
 
 ## Testes
 
@@ -180,40 +180,40 @@ pytest -q -m integration
 
 - [x] Criar script para subir ADM.
 - [x] Criar script para subir R1.
-- [ ] Criar script para subir R2.
-- [ ] Criar script para subir SUP de R1.
+- [x] Criar script para subir R2.
+- [x] Criar script para subir SUP de R1.
 - [x] Criar script para cliente.
 - [x] Criar script para entregador.
 - [x] Cliente cria pedido.
 - [x] Entregador recebe pedido disponivel.
 - [x] Entregador aceita pedido.
-- [ ] ADM atribui pedido a um R.
-- [ ] Entregador envia localizacoes.
+- [x] ADM atribui pedido a um R.
+- [x] Entregador envia localizacoes.
 - [x] Cliente recebe localizacoes.
-- [ ] Cliente confirma entrega.
+- [x] Cliente confirma entrega.
 
 ## Demonstracao de Falha
 
-- [ ] Subir pelo menos dois servidores R.
-- [ ] Associar pedido ao R1.
-- [ ] Sincronizar backup no SUP.
-- [ ] Simular queda do R1.
-- [ ] ADM detectar ausencia de `KeepAlive`.
-- [ ] ADM solicitar backup ao SUP.
-- [ ] ADM redistribuir pedido para R2.
-- [ ] Mostrar rastreio continuando pelo novo servidor.
+- [x] Subir pelo menos dois servidores R.
+- [x] Associar pedido ao R1.
+- [x] Sincronizar backup no SUP.
+- [x] Simular queda do R1.
+- [x] ADM detectar ausencia de `KeepAlive`.
+- [x] ADM solicitar backup ao SUP.
+- [x] ADM redistribuir pedido para R2.
+- [x] Mostrar rastreio continuando pelo novo servidor.
 
 ## Logs de Apresentacao
 
-- [ ] Logar pedido criado.
-- [ ] Logar pedido aceito.
-- [ ] Logar servidor rastreador escolhido.
-- [ ] Logar localizacao recebida.
+- [ ] Logar pedido criado (parcial: `[cliente] pedido criado` no broker).
+- [ ] Logar pedido aceito (parcial: `[entregador] pedido aceito`).
+- [ ] Logar servidor rastreador escolhido (parcial: `[rastreador] pedido ... atribuido` no R).
+- [ ] Logar localizacao recebida (parcial: `[rastreador] localizacao publicada`).
 - [ ] Logar localizacao ignorada por timestamp antigo.
 - [ ] Logar heartbeat recebido.
-- [ ] Logar falha detectada.
+- [ ] Logar falha detectada (parcial: `[adm] rastreador ... heartbeat expirado`).
 - [ ] Logar backup recebido do SUP.
-- [ ] Logar pedido redistribuido.
+- [ ] Logar pedido redistribuido (parcial: `[adm] pedido ... redistribuido`).
 - [ ] Logar novo lider eleito.
 
 ## Proximos Passos Recomendados
@@ -228,5 +228,6 @@ pytest -q -m integration
 
 - [x] Projeto correto como prova de conceito em memoria seguindo o PDF.
 - [x] Testes atuais passando.
-- [x] Demo ADM com 3 processos e RabbitMQ real implementadas; falta E2E completo (R, SUP, cliente e entregador via broker).
+- [x] Demo ADM com 3 processos e RabbitMQ real implementadas.
+- [x] Demo E2E completa (R1/R2, SUP, cliente e entregador via broker) e failover manual validados.
 - [x] Atualizar este checklist sempre que uma etapa nova for implementada.

@@ -14,6 +14,7 @@ from src.clients.driver_broker import (
     aceitar_pedido_via_adm,
     criar_callback_entrega_confirmada,
     criar_callback_pedido_disponivel,
+    criar_callback_rastreador_atualizado,
     parse_pedido_disponivel,
 )
 
@@ -129,12 +130,14 @@ def test_callback_imprime_e_aceita_pedido(monkeypatch, capsys):
     monkeypatch.setattr("src.clients.driver_broker.threading.Thread", FakeThread)
 
     settings = BrokerSettings(enabled=True)
+    rastreador_por_pedido = {}
     callback = criar_callback_pedido_disponivel(
         id_entregador="entregador-1",
         adm_url="http://127.0.0.1:8003",
         aceitar_automatico=True,
         broker_settings=settings,
         parar_gps={},
+        rastreador_por_pedido=rastreador_por_pedido,
     )
     callback(
         {
@@ -147,7 +150,67 @@ def test_callback_imprime_e_aceita_pedido(monkeypatch, capsys):
     assert len(aceitos) == 1
     assert aceitos[0][2] == id_pedido
     assert len(threads) == 1
+    assert rastreador_por_pedido[id_pedido] == "rastreador-2"
     assert "pedido disponivel" in capsys.readouterr().out
+
+
+def test_callback_rastreador_atualizado():
+    id_pedido = uuid4()
+    rastreador_por_pedido = {id_pedido: "rastreador-1"}
+
+    callback = criar_callback_rastreador_atualizado(rastreador_por_pedido)
+    callback(
+        {
+            "idPedido": str(id_pedido),
+            "idServidorRastreador": "rastreador-2",
+            "idEntregador": "entregador-1",
+            "timestamp": 1,
+        }
+    )
+
+    assert rastreador_por_pedido[id_pedido] == "rastreador-2"
+
+
+def test_publicar_localizacoes_usa_rastreador_atualizado(monkeypatch):
+    id_pedido = uuid4()
+    publicacoes = []
+    parar = threading.Event()
+    rastreador_por_pedido = {id_pedido: "rastreador-1"}
+
+    class FakePublisher:
+        def publish(self, exchange, routing_key, message):
+            publicacoes.append(routing_key)
+
+    monkeypatch.setattr(
+        "src.clients.driver_broker.criar_publisher",
+        lambda settings: FakePublisher(),
+    )
+    monkeypatch.setattr(
+        "src.clients.driver_broker.fechar_publisher",
+        lambda publisher: None,
+    )
+
+    thread = threading.Thread(
+        target=_publicar_localizacoes_periodicas,
+        args=(
+            "entregador-1",
+            id_pedido,
+            0.05,
+            BrokerSettings(enabled=True),
+            parar,
+            rastreador_por_pedido,
+        ),
+        daemon=True,
+    )
+    thread.start()
+    time.sleep(0.07)
+    rastreador_por_pedido[id_pedido] = "rastreador-2"
+    time.sleep(0.07)
+    parar.set()
+    thread.join(timeout=1)
+
+    assert "rastreador.rastreador-1" in publicacoes
+    assert "rastreador.rastreador-2" in publicacoes
 
 
 def test_callback_entrega_confirmada_para_gps():
@@ -184,10 +247,10 @@ def test_publicar_localizacoes_para_quando_entrega_confirmada(monkeypatch):
         args=(
             "entregador-1",
             id_pedido,
-            "rastreador-1",
             0.05,
             BrokerSettings(enabled=True),
             parar,
+            {id_pedido: "rastreador-1"},
         ),
         daemon=True,
     )

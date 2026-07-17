@@ -96,6 +96,17 @@ def test_fluxo_criar_aceitar_rastrear_confirmar():
     assert pedido.idPedido == id_pedido
     assert id_pedido in adm.pedidos_sem_entregador
 
+    for id_rastreador in ("rastreador-1", "rastreador-2"):
+        run(
+            adm.processar_keepalive(
+                KeepAlive(
+                    idServidor=id_rastreador,
+                    tipoServidor=TipoServidor.RASTREADOR,
+                    timestamp=1710000000,
+                )
+            )
+        )
+
     pedido = run(
         adm.aceitar_pedido(
             AceitarPedido(
@@ -205,6 +216,7 @@ def test_adm_detecta_heartbeat_expirado_e_redistribui():
     )
     adm.mapa_pedido_servidor[id_pedido] = "rastreador-1"
     adm.pedidos[id_pedido].servidorRastreadorResponsavel = "rastreador-1"
+    adm.servidores_rastreadores_ativos.update({"rastreador-1", "rastreador-2"})
     adm.ultimo_keepalive["rastreador-1"] = time() - 10
 
     assert adm.servidores_com_heartbeat_expirado()
@@ -216,14 +228,21 @@ def test_adm_detecta_heartbeat_expirado_e_redistribui():
 
 def test_adm_expira_rastreador_que_nunca_renovou_heartbeat():
     adm = ADMServer("adm-1", ["rastreador-1"], heartbeat_timeout=5)
+    instante = time()
+    adm.servidores_rastreadores_ativos.add("rastreador-1")
+    adm.ultimo_keepalive["rastreador-1"] = instante
 
-    assert adm.servidores_com_heartbeat_expirado(agora=time() + 10) == ["rastreador-1"]
+    assert adm.servidores_com_heartbeat_expirado(agora=instante + 10) == ["rastreador-1"]
 
 
 def test_adm_retorna_heartbeats_expirados_em_ordem_estavel():
     adm = ADMServer("adm-1", ["rastreador-2", "rastreador-1"], heartbeat_timeout=5)
+    instante = time()
+    adm.servidores_rastreadores_ativos.update({"rastreador-1", "rastreador-2"})
+    adm.ultimo_keepalive["rastreador-1"] = instante
+    adm.ultimo_keepalive["rastreador-2"] = instante
 
-    assert adm.servidores_com_heartbeat_expirado(agora=time() + 10) == [
+    assert adm.servidores_com_heartbeat_expirado(agora=instante + 10) == [
         "rastreador-1",
         "rastreador-2",
     ]
