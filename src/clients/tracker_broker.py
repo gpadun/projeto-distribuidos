@@ -16,6 +16,7 @@ from src.broker.topology import (
 )
 from src.core.models import AtualizacaoRoteamento, LocalizacaoEntregador, KeepAlive, TipoServidor
 from src.core.serialization import to_message_dict
+from src.presentation_log import log_apresentacao
 from src.servers.tracker_server import TrackerServer
 
 
@@ -111,11 +112,11 @@ def executar_rastreador_broker(
         criar_callback_localizacao(tracker),
     )
 
-    print(
-        f"[rastreador {id_servidor}] ouvindo "
-        f"{EXCHANGE_INFRA}/{routing_roteamento_key} e "
+    log_apresentacao(
+        f"rastreador {id_servidor}",
+        f"ouvindo {EXCHANGE_INFRA}/{routing_roteamento_key} e "
         f"{EXCHANGE_LOCALIZACAO}/{routing_localizacao_key}; "
-        f"keepalive ADMs={', '.join(adm_urls)}"
+        f"keepalive ADMs={', '.join(adm_urls)}",
     )
 
     errors: list[Exception] = []

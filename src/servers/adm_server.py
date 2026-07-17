@@ -35,6 +35,7 @@ from src.broker.topology import (
     routing_rastreador_atualizado,
     routing_roteamento,
 )
+from src.presentation_log import log_apresentacao
 
 
 class NaoELiderError(Exception):
@@ -116,6 +117,10 @@ class ADMServer:
             timestamp=pedido.timestamp,
         )
         self._publish(EXCHANGE_PEDIDOS, ROUTING_PEDIDO_DISPONIVEL, evento)
+        log_apresentacao(
+            f"adm {self.id_servidor}",
+            f"pedido criado: {pedido.idPedido} cliente={pedido.idCliente}",
+        )
         return pedido
 
     async def aceitar_pedido(self, requisicao: AceitarPedido) -> Pedido:
@@ -139,6 +144,11 @@ class ADMServer:
             timestamp=requisicao.timestamp,
         )
         self._publish(EXCHANGE_INFRA, routing_roteamento(servidor), atualizacao)
+        log_apresentacao(
+            f"adm {self.id_servidor}",
+            f"pedido aceito: {requisicao.idPedido} entregador={requisicao.idEntregador} "
+            f"rastreador={servidor}",
+        )
         return pedido
 
     async def confirmar_entrega(self, requisicao: ConfirmarEntrega) -> EntregaConfirmada:
@@ -168,7 +178,13 @@ class ADMServer:
             mensagem.tipoServidor == TipoServidor.RASTREADOR
             and mensagem.idServidor in self.servidores_rastreadores
         ):
+            novo_ativo = mensagem.idServidor not in self.servidores_rastreadores_ativos
             self.servidores_rastreadores_ativos.add(mensagem.idServidor)
+            if novo_ativo and self.sou_lider():
+                log_apresentacao(
+                    f"adm {self.id_servidor}",
+                    f"heartbeat recebido: {mensagem.idServidor} (rastreador ativo)",
+                )
 
         elif (
             mensagem.tipoServidor == TipoServidor.ADM 
@@ -225,7 +241,15 @@ class ADMServer:
         if id_servidor not in self.servidores_rastreadores_ativos:
             return {}
 
+        log_apresentacao(
+            f"adm {self.id_servidor}",
+            f"falha detectada: rastreador {id_servidor} (heartbeat expirado)",
+        )
         backup = await self._buscar_backup_sup(id_servidor)
+        log_apresentacao(
+            f"adm {self.id_servidor}",
+            f"backup recebido do SUP para {id_servidor}: {len(backup)} pedido(s)",
+        )
         self.servidores_rastreadores_ativos.discard(id_servidor)
 
         afetados = [
@@ -283,9 +307,9 @@ class ADMServer:
                     },
                 )
 
-            print(
-                f"[adm] pedido {id_pedido} redistribuido "
-                f"{id_servidor} -> {novo_servidor}"
+            log_apresentacao(
+                f"adm {self.id_servidor}",
+                f"pedido redistribuido: {id_pedido} {id_servidor} -> {novo_servidor}",
             )
 
         return redistribuidos
@@ -416,6 +440,10 @@ class ADMServer:
         self.lider_disponivel = False
         self.aguardando_eleicao = True
         self.servidores_adm_ativos.discard(self.lider_atual)
+        log_apresentacao(
+            f"adm {self.id_servidor}",
+            f"falha do lider detectada: {self.id_lider_anterior}",
+        )
 
         if self.on_lider_caiu is not None:
             await self.on_lider_caiu(self.id_lider_anterior)
@@ -429,18 +457,7 @@ class ADMServer:
         
         if self.sou_lider():
             for id_rastreador in self.servidores_com_heartbeat_expirado():
-                print(
-                    f"[adm {self.id_servidor}] rastreador {id_rastreador} "
-                    "com heartbeat expirado"
-                )
-                redistribuidos = await self.detectar_falha_servidor_rastreador(
-                    id_rastreador
-                )
-                if redistribuidos:
-                    print(
-                        f"[adm {self.id_servidor}] pedidos redistribuidos: "
-                        f"{ {str(k): v for k, v in redistribuidos.items()} }"
-                    )
+                await self.detectar_falha_servidor_rastreador(id_rastreador)
 
         return falha_lider
     
@@ -496,6 +513,11 @@ class ADMServer:
         for id_adm in self._adms_ativos_com_id_menor_que(self.id_servidor):
             await self._enviar_novo_lider(id_adm, mensagem)
 
+        log_apresentacao(
+            f"adm {self.id_servidor}",
+            f"novo lider eleito: {self.id_servidor} "
+            f"(anterior: {self.id_lider_anterior or '?'})",
+        )
         return self.lider_atual
     
     async def processar_iniciar_eleicao(self, mensagem: IniciarEleicao) -> None:
@@ -513,6 +535,12 @@ class ADMServer:
             self.recebeu_resposta_de_maior = True
 
     async def processar_novo_lider(self, mensagem: NovoLider) -> None:
+        if mensagem.idServidor != self.lider_atual:
+            log_apresentacao(
+                f"adm {self.id_servidor}",
+                f"novo lider eleito: {mensagem.idServidor} "
+                f"(anterior: {mensagem.idLiderAnterior or '?'})",
+            )
         self.lider_atual = mensagem.idServidor
         self.lider_disponivel = True
         self.aguardando_eleicao = False

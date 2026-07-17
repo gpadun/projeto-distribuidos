@@ -11,6 +11,7 @@ from src.broker.factory import criar_subscriber, fechar_subscriber
 from src.broker.topology import EXCHANGE_RASTREIO, routing_localizacao
 from src.core.models import ConfirmarEntrega, CriarPedido, EventoLocalizacao
 from src.core.serialization import to_message_dict
+from src.presentation_log import log_apresentacao
 
 
 class CustomerBrokerError(RuntimeError):
@@ -97,9 +98,10 @@ def criar_callback_localizacao(id_cliente: str):
 
     def callback(payload: dict) -> None:
         evento = parse_evento_localizacao(payload)
-        print(
-            f"[cliente {id_cliente}] localizacao: pedido={evento.idPedido} "
-            f"lat={evento.latitude} lon={evento.longitude} ts={evento.timestamp}"
+        log_apresentacao(
+            f"cliente {id_cliente}",
+            f"localizacao: pedido={evento.idPedido} "
+            f"lat={evento.latitude} lon={evento.longitude} ts={evento.timestamp}",
         )
 
     return callback
@@ -125,9 +127,9 @@ def executar_assinatura_rastreio(
     callback = criar_callback_localizacao(id_cliente)
 
     subscriber.subscribe(EXCHANGE_RASTREIO, routing_key, callback)
-    print(
-        f"[cliente] assinando {EXCHANGE_RASTREIO}/{routing_key} "
-        f"para pedido {id_pedido}"
+    log_apresentacao(
+        "cliente",
+        f"assinando {EXCHANGE_RASTREIO}/{routing_key} para pedido {id_pedido}",
     )
 
     try:
@@ -156,7 +158,7 @@ def executar_cliente_broker(
 
     if acao == "criar":
         pedido_id = criar_pedido_via_adm(url_adm, id_cliente, id_restaurante, id_pedido)
-        print(f"[cliente] pedido criado: {pedido_id}")
+        log_apresentacao("cliente", f"pedido criado: {pedido_id}")
         return
     
     if acao == "rastrear":
@@ -167,7 +169,7 @@ def executar_cliente_broker(
     
     if acao == "demo":
         pedido_id = criar_pedido_via_adm(url_adm, id_cliente, id_restaurante, id_pedido)
-        print(f"[cliente] pedido criado: {pedido_id}")
+        log_apresentacao("cliente", f"pedido criado: {pedido_id}")
         executar_assinatura_rastreio(pedido_id, id_cliente, broker_settings)
         return
     

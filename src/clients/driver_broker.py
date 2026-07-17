@@ -30,6 +30,7 @@ from src.core.models import (
     PedidoDisponivel,
 )
 from src.core.serialization import to_message_dict
+from src.presentation_log import log_apresentacao
 
 
 class DriverBrokerError(RuntimeError):
@@ -90,7 +91,7 @@ def criar_callback_entrega_confirmada(
         if parar is None:
             return
         parar.set()
-        print(f"[entregador] entrega confirmada: idPedido={evento.idPedido}")
+        log_apresentacao("entregador", f"entrega confirmada: idPedido={evento.idPedido}")
 
     return callback
 
@@ -104,8 +105,9 @@ def criar_callback_rastreador_atualizado(
         id_pedido = UUID(str(payload["idPedido"]))
         novo_rastreador = payload["idServidorRastreador"]
         rastreador_por_pedido[id_pedido] = novo_rastreador
-        print(
-            f"[entregador] rastreador atualizado pedido={id_pedido} -> {novo_rastreador}"
+        log_apresentacao(
+            "entregador",
+            f"rastreador atualizado pedido={id_pedido} -> {novo_rastreador}",
         )
 
     return callback
@@ -125,9 +127,9 @@ def criar_callback_pedido_disponivel(
 
     def callback(payload: dict) -> None:
         evento = parse_pedido_disponivel(payload)
-        print(
-            f"[entregador] pedido disponivel: idPedido={evento.idPedido} "
-            f"restaurante={evento.idRestaurante}"
+        log_apresentacao(
+            "entregador",
+            f"pedido disponivel: idPedido={evento.idPedido} restaurante={evento.idRestaurante}",
         )
 
         if not aceitar_automatico:
@@ -139,9 +141,9 @@ def criar_callback_pedido_disponivel(
         resultado = aceitar_pedido_via_adm(adm_url, id_entregador, evento.idPedido)
         pedidos_aceitos.add(evento.idPedido)
         id_rastreador = resultado.get("servidorRastreadorResponsavel")
-        print(
-            f"[entregador] pedido aceito: idPedido={resultado.get('idPedido')} "
-            f"rastreador={id_rastreador}"
+        log_apresentacao(
+            "entregador",
+            f"pedido aceito: idPedido={resultado.get('idPedido')} rastreador={id_rastreador}",
         )
 
         if not id_rastreador:
@@ -240,6 +242,7 @@ def _publicar_localizacoes_periodicas(
 
     latitude = -23.55052
     longitude = -46.633308
+    primeira_localizacao = True
 
     try:
         while not parar_event.is_set():
@@ -263,10 +266,12 @@ def _publicar_localizacoes_periodicas(
                 routing_localizacao_para_rastreador(id_rastreador),
                 to_message_dict(localizacao),
             )
-            print(
-                f"[entregador] localizacao enviada pedido={id_pedido} "
-                f"rastreador={id_rastreador}"
-            )
+            if primeira_localizacao:
+                log_apresentacao(
+                    "entregador",
+                    f"localizacao enviada: pedido={id_pedido} rastreador={id_rastreador}",
+                )
+                primeira_localizacao = False
             if parar_event.wait(timeout=intervalo_segundos):
                 break
     except Exception as exc:

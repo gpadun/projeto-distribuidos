@@ -8,6 +8,7 @@ from src.core.serialization import to_message_dict
 from src.servers.support_server import SupportServer
 
 from src.broker.topology import EXCHANGE_RASTREIO, routing_desconexao, routing_localizacao
+from src.presentation_log import log_apresentacao
 
 
 class TrackerServer:
@@ -45,6 +46,11 @@ class TrackerServer:
 
         anterior = self.ultimas_localizacoes.get(localizacao.idPedido)
         if anterior and anterior.timestamp >= localizacao.timestamp:
+            log_apresentacao(
+                f"rastreador {self.id_servidor}",
+                f"localizacao ignorada: pedido={localizacao.idPedido} "
+                f"ts={localizacao.timestamp} <= anterior={anterior.timestamp}",
+            )
             return
 
         self.ultimas_localizacoes[localizacao.idPedido] = localizacao
@@ -105,9 +111,10 @@ class TrackerServer:
         if not atualizacao.idEntregador:
             raise ValueError("atualizacao de roteamento sem idEntregador")
         await self.registrar_entregador(atualizacao.idEntregador, atualizacao.idPedido)
-        print(
-            f"[rastreador {self.id_servidor}] pedido {atualizacao.idPedido} "
-            f"atribuido ao entregador {atualizacao.idEntregador}"
+        log_apresentacao(
+            f"rastreador {self.id_servidor}",
+            f"pedido {atualizacao.idPedido} atribuido ao entregador "
+            f"{atualizacao.idEntregador}",
         )
     
     async def processar_localizacao_entregador(
@@ -115,7 +122,8 @@ class TrackerServer:
     ) -> None:
         """Receive driver GPS from RabbitMQ and publish EventoLocalizacao."""
         await self.receber_localizacao(localizacao)
-        print(
-            f"[rastreador {self.id_servidor}] localizacao publicada "
-            f"pedido={localizacao.idPedido}"
+        log_apresentacao(
+            f"rastreador {self.id_servidor}",
+            f"localizacao recebida: pedido={localizacao.idPedido} "
+            f"lat={localizacao.latitude} lon={localizacao.longitude}",
         )

@@ -8,10 +8,10 @@ Ultima validacao:
 
 ```text
 pytest -q
-91 passed
+94 passed
 
 # sem RabbitMQ (docker compose stop):
-# 88 passed, 3 skipped
+# 91 passed, 3 skipped
 
 pytest -q -m integration
 3 passed
@@ -205,23 +205,25 @@ pytest -q -m integration
 
 ## Logs de Apresentacao
 
-- [ ] Logar pedido criado (parcial: `[cliente] pedido criado` no broker).
-- [ ] Logar pedido aceito (parcial: `[entregador] pedido aceito`).
-- [ ] Logar servidor rastreador escolhido (parcial: `[rastreador] pedido ... atribuido` no R).
-- [ ] Logar localizacao recebida (parcial: `[rastreador] localizacao publicada`).
-- [ ] Logar localizacao ignorada por timestamp antigo.
-- [ ] Logar heartbeat recebido.
-- [ ] Logar falha detectada (parcial: `[adm] rastreador ... heartbeat expirado`).
-- [ ] Logar backup recebido do SUP.
-- [ ] Logar pedido redistribuido (parcial: `[adm] pedido ... redistribuido`).
-- [ ] Logar novo lider eleito.
+- [x] Logar pedido criado (`[adm]` + `[cliente]`).
+- [x] Logar pedido aceito (`[adm]` + `[entregador]`).
+- [x] Logar servidor rastreador escolhido (`[adm]` na aceitacao + `[rastreador]` no roteamento).
+- [x] Logar localizacao recebida (`[rastreador]` + `[cliente]`).
+- [x] Logar localizacao ignorada por timestamp antigo (`[rastreador]`).
+- [x] Logar heartbeat recebido (primeira ativacao do rastreador no lider ADM).
+- [x] Logar falha detectada (`[adm]` ao processar heartbeat expirado).
+- [x] Logar backup recebido do SUP (`[adm]` + `[sup]` no GET `/backup`).
+- [x] Logar pedido redistribuido (`[adm]`).
+- [x] Logar novo lider eleito (`[adm]` na eleicao Bully).
+
+Desabilitar logs: `PRESENTATION_LOG=0`.
 
 ## Proximos Passos Recomendados
 
 - [x] Criar `docker-compose.yml` do RabbitMQ.
 - [x] Criar scripts de execucao dos componentes.
 - [x] Implementar demo local com multiplos processos.
-- [ ] Adicionar logs de apresentacao.
+- [x] Adicionar logs de apresentacao.
 - [x] Atualizar README com roteiro final.
 
 ## Observacoes
