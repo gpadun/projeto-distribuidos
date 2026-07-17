@@ -8,6 +8,7 @@ from uuid import UUID
 
 from src.core.models import LocalizacaoEntregador
 from src.servers.tracker_server import TrackerServer
+from src.clients.driver_broker import executar_entregador_broker
 
 
 class MockDriver:
@@ -53,12 +54,39 @@ class MockDriver:
 
 
 def main() -> None:
-    """Run the driver simulator in print-only mode from the terminal."""
-    parser = argparse.ArgumentParser(description="Simula um entregador enviando GPS falso.")
+    """Run the driver simulator from the terminal."""
+    parser = argparse.ArgumentParser(description="Simula um entregador.")
+    parser.add_argument(
+        "--modo",
+        choices=["broker", "gps"],
+        default="broker",
+        help="broker: ouve PedidoDisponivel; gps: envia localizacoes falsas",
+    )
     parser.add_argument("--id-entregador", default="entregador-1")
-    parser.add_argument("--id-pedido", required=True)
+    parser.add_argument("--id-pedido", help="obrigatorio no modo gps")
     parser.add_argument("--intervalo", type=float, default=2.0)
+    parser.add_argument(
+        "--adm-url",
+        default=None,
+        help="URL do ADM lider (padrao: ADM_URL ou http://127.0.0.1:8003)",
+    )
+    parser.add_argument(
+        "--sem-aceitar-automatico",
+        action="store_true",
+        help="no modo broker, apenas imprime PedidoDisponivel",
+    )
     args = parser.parse_args()
+
+    if args.modo == "broker":
+        executar_entregador_broker(
+            id_entregador=args.id_entregador,
+            adm_url=args.adm_url,
+            aceitar_automatico=not args.sem_aceitar_automatico,
+        )
+        return
+
+    if not args.id_pedido:
+        parser.error("--id-pedido e obrigatorio no modo gps")
 
     driver = MockDriver(args.id_entregador, args.id_pedido)
     asyncio.run(driver.enviar_localizacoes_periodicamente(args.intervalo))

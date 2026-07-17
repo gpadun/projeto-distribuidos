@@ -1,0 +1,24 @@
+param(
+    [string]$IdEntregador = "entregador-1",
+    [string]$AdmUrl = "http://127.0.0.1:8003"
+)
+
+$ErrorActionPreference = "Stop"
+
+$projectRoot = Split-Path -Parent $PSScriptRoot
+Set-Location $projectRoot
+
+$env:RABBITMQ_ENABLED = "1"
+$env:RABBITMQ_HOST = "127.0.0.1"
+$env:RABBITMQ_PORT = "5672"
+$env:RABBITMQ_USER = "dsid"
+$env:RABBITMQ_PASSWORD = "dsid123"
+$env:ADM_URL = $AdmUrl
+
+Write-Host "Entregador $IdEntregador ouvindo PedidoDisponivel"
+Write-Host "ADM lider: $AdmUrl"
+
+& "$projectRoot\.venv\Scripts\python.exe" -m src.clients.mock_driver `
+    --modo broker `
+    --id-entregador $IdEntregador `
+    --adm-url $AdmUrl

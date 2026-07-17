@@ -183,10 +183,10 @@ pytest -q -m integration
 - [ ] Criar script para subir R2.
 - [ ] Criar script para subir SUP de R1.
 - [ ] Criar script para cliente.
-- [ ] Criar script para entregador.
+- [x] Criar script para entregador.
 - [ ] Cliente cria pedido.
-- [ ] Entregador recebe pedido disponivel.
-- [ ] Entregador aceita pedido.
+- [x] Entregador recebe pedido disponivel.
+- [x] Entregador aceita pedido.
 - [ ] ADM atribui pedido a um R.
 - [ ] Entregador envia localizacoes.
 - [ ] Cliente recebe localizacoes.
