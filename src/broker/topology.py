@@ -8,6 +8,7 @@ EXCHANGE_INFRA = "infra"
 EXCHANGE_LOCALIZACAO = "localizacao"
 
 ROUTING_PEDIDO_DISPONIVEL = "pedido.disponivel"
+ROUTING_ENTREGA_CONFIRMADA = "pedido.*.entrega_confirmada"
 
 
 def routing_entrega_confirmada(id_pedido: UUID | str) -> str:

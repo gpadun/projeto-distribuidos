@@ -1,5 +1,7 @@
 """Tests for driver broker client."""
 
+import threading
+import time
 from uuid import uuid4
 
 import httpx
@@ -8,7 +10,9 @@ import pytest
 from src.broker.config import BrokerSettings
 from src.clients.driver_broker import (
     DriverBrokerError,
+    _publicar_localizacoes_periodicas,
     aceitar_pedido_via_adm,
+    criar_callback_entrega_confirmada,
     criar_callback_pedido_disponivel,
     parse_pedido_disponivel,
 )
@@ -130,6 +134,7 @@ def test_callback_imprime_e_aceita_pedido(monkeypatch, capsys):
         adm_url="http://127.0.0.1:8003",
         aceitar_automatico=True,
         broker_settings=settings,
+        parar_gps={},
     )
     callback(
         {
@@ -143,3 +148,54 @@ def test_callback_imprime_e_aceita_pedido(monkeypatch, capsys):
     assert aceitos[0][2] == id_pedido
     assert len(threads) == 1
     assert "pedido disponivel" in capsys.readouterr().out
+
+
+def test_callback_entrega_confirmada_para_gps():
+    id_pedido = uuid4()
+    parar_gps = {id_pedido: threading.Event()}
+
+    callback = criar_callback_entrega_confirmada(parar_gps)
+    callback({"idPedido": str(id_pedido), "timestamp": 1})
+
+    assert parar_gps[id_pedido].is_set()
+
+
+def test_publicar_localizacoes_para_quando_entrega_confirmada(monkeypatch):
+    id_pedido = uuid4()
+    publicacoes = []
+    parar = threading.Event()
+
+    class FakePublisher:
+        def publish(self, exchange, routing_key, message):
+            del exchange, routing_key, message
+            publicacoes.append(1)
+
+    monkeypatch.setattr(
+        "src.clients.driver_broker.criar_publisher",
+        lambda settings: FakePublisher(),
+    )
+    monkeypatch.setattr(
+        "src.clients.driver_broker.fechar_publisher",
+        lambda publisher: None,
+    )
+
+    thread = threading.Thread(
+        target=_publicar_localizacoes_periodicas,
+        args=(
+            "entregador-1",
+            id_pedido,
+            "rastreador-1",
+            0.05,
+            BrokerSettings(enabled=True),
+            parar,
+        ),
+        daemon=True,
+    )
+    thread.start()
+    time.sleep(0.12)
+    parar.set()
+    thread.join(timeout=1)
+
+    assert not thread.is_alive()
+    assert len(publicacoes) >= 1
+    assert len(publicacoes) <= 4

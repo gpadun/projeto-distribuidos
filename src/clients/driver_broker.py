@@ -1,18 +1,33 @@
 """Driver client that listens to PedidoDisponivel on RabbitMQ."""
 
 import os
-import time
-from uuid import UUID
-import asyncio
 import random
 import threading
+import time
+from uuid import UUID
 
 import httpx
 
 from src.broker.config import BrokerSettings
-from src.broker.factory import criar_subscriber, fechar_subscriber, criar_publisher, fechar_publisher
-from src.broker.topology import EXCHANGE_PEDIDOS, ROUTING_PEDIDO_DISPONIVEL, EXCHANGE_LOCALIZACAO, routing_localizacao_para_rastreador
-from src.core.models import AceitarPedido, PedidoDisponivel, LocalizacaoEntregador
+from src.broker.factory import (
+    criar_publisher,
+    criar_subscriber,
+    fechar_publisher,
+    fechar_subscriber,
+)
+from src.broker.topology import (
+    EXCHANGE_LOCALIZACAO,
+    EXCHANGE_PEDIDOS,
+    ROUTING_ENTREGA_CONFIRMADA,
+    ROUTING_PEDIDO_DISPONIVEL,
+    routing_localizacao_para_rastreador,
+)
+from src.core.models import (
+    AceitarPedido,
+    EntregaConfirmada,
+    LocalizacaoEntregador,
+    PedidoDisponivel,
+)
 from src.core.serialization import to_message_dict
 
 
@@ -58,11 +73,33 @@ def aceitar_pedido_via_adm(
     )
 
 
+def parse_entrega_confirmada(payload: dict) -> EntregaConfirmada:
+    """Validate broker payload as EntregaConfirmada."""
+    return EntregaConfirmada.model_validate(payload)
+
+
+def criar_callback_entrega_confirmada(
+    parar_gps: dict[UUID, threading.Event],
+):
+    """Build the RabbitMQ callback that stops GPS publishing for one order."""
+
+    def callback(payload: dict) -> None:
+        evento = parse_entrega_confirmada(payload)
+        parar = parar_gps.get(evento.idPedido)
+        if parar is None:
+            return
+        parar.set()
+        print(f"[entregador] entrega confirmada: idPedido={evento.idPedido}")
+
+    return callback
+
+
 def criar_callback_pedido_disponivel(
     id_entregador: str,
     adm_url: str,
     aceitar_automatico: bool,
     broker_settings: BrokerSettings,
+    parar_gps: dict[UUID, threading.Event],
     intervalo_gps: float = 2.0,
 ):
     """Build the RabbitMQ callback for PedidoDisponivel events."""
@@ -91,7 +128,10 @@ def criar_callback_pedido_disponivel(
 
         if not id_rastreador:
             return
-        
+
+        parar = threading.Event()
+        parar_gps[evento.idPedido] = parar
+
         thread = threading.Thread(
             target=_publicar_localizacoes_periodicas,
             args=(
@@ -100,6 +140,7 @@ def criar_callback_pedido_disponivel(
                 id_rastreador,
                 intervalo_gps,
                 broker_settings,
+                parar,
             ),
             daemon=True,
         )
@@ -126,18 +167,27 @@ def executar_entregador_broker(
     subscriber = criar_subscriber(settings)
     if subscriber is None:
         raise DriverBrokerError("nao foi possivel criar subscriber RabbitMQ")
-    
+
+    parar_gps: dict[UUID, threading.Event] = {}
+
     callback = criar_callback_pedido_disponivel(
         id_entregador=id_entregador,
         adm_url=adm_url,
         aceitar_automatico=aceitar_automatico,
         broker_settings=settings,
+        parar_gps=parar_gps,
         intervalo_gps=intervalo_gps,
     )
 
     subscriber.subscribe(EXCHANGE_PEDIDOS, ROUTING_PEDIDO_DISPONIVEL, callback)
+    subscriber.subscribe(
+        EXCHANGE_PEDIDOS,
+        ROUTING_ENTREGA_CONFIRMADA,
+        criar_callback_entrega_confirmada(parar_gps),
+    )
     print(
-        f"[entregador] ouvindo {EXCHANGE_PEDIDOS}/{ROUTING_PEDIDO_DISPONIVEL} "
+        f"[entregador] ouvindo {EXCHANGE_PEDIDOS}/{ROUTING_PEDIDO_DISPONIVEL}, "
+        f"{EXCHANGE_PEDIDOS}/{ROUTING_ENTREGA_CONFIRMADA} "
         f"como {id_entregador}; ADM={adm_url}"
     )
 
@@ -155,16 +205,17 @@ def _publicar_localizacoes_periodicas(
     id_rastreador: str,
     intervalo_segundos: float,
     broker_settings: BrokerSettings,
+    parar_event: threading.Event,
 ) -> None:
     publisher = criar_publisher(broker_settings)
     if publisher is None:
         return
-    
+
     latitude = -23.55052
     longitude = -46.633308
 
     try:
-        while True:
+        while not parar_event.is_set():
             latitude += random.uniform(-0.001, 0.001)
             longitude += random.uniform(-0.001, 0.001)
             localizacao = LocalizacaoEntregador(
@@ -183,8 +234,11 @@ def _publicar_localizacoes_periodicas(
                 f"[entregador] localizacao enviada pedido={id_pedido} "
                 f"rastreador={id_rastreador}"
             )
-            time.sleep(intervalo_segundos)
+            if parar_event.wait(timeout=intervalo_segundos):
+                break
     except Exception as exc:
         print(f"[entregador] erro ao publicar localizacao: {exc}")
     finally:
         fechar_publisher(publisher)
+        if parar_event.is_set():
+            print(f"[entregador] GPS encerrado para pedido={id_pedido}")
