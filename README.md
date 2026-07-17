@@ -358,17 +358,40 @@ Documentacao interativa: `http://127.0.0.1:8000/docs` (ou porta do ADM).
 
 ## Roteiro rapido de apresentacao (5 minutos)
 
-1. `docker compose up -d` — mostrar painel em `:15672`
+### Cluster ADM + eleicao
+
+1. `docker compose up -d` — painel RabbitMQ em `:15672`
 2. `.\scripts\start_cluster.ps1` — 3 ADMs
 3. `.\scripts\demo_estado.ps1` — lider inicial `adm-3`
-4. `.\scripts\demo_pedido.ps1` no adm-1 → 409; no adm-3 → 200
-5. Painel RabbitMQ → exchange `pedidos` com mensagem
-6. Matar adm-3 → aguardar 15s → novo lider `adm-2`
-7. Criar pedido no adm-2 → sucesso
+4. Matar adm-3 → aguardar ~15s → logs `[adm ...] novo lider eleito: adm-2`
+5. `.\scripts\demo_pedido.ps1` no adm-1 → 409; no lider → 200
+
+### Fluxo E2E (pedido → rastreio → confirmacao)
+
+1. `.\scripts\start_support.ps1` (9101) e `-IdServidor sup-2 -IdRastreador rastreador-2 -Port 9102`
+2. `.\scripts\start_tracker.ps1` e `-IdServidor rastreador-2`
+3. `.\scripts\start_driver.ps1`
+4. `.\scripts\start_customer.ps1 -Acao demo`
+5. Acompanhar logs:
+   - ADM: `[adm] pedido criado`, `pedido aceito ... rastreador=...`
+   - Entregador: `pedido disponivel`, `pedido aceito`
+   - Rastreador: `pedido ... atribuido`, `localizacao recebida`
+   - Cliente: `localizacao: pedido=...`
+   - SUP: `sync recebido ...`
+
+### Failover de rastreador
+
+1. Com fluxo E2E rodando, matar o rastreador do log do entregador
+2. Aguardar ~15s
+3. ADM: `falha detectada`, `backup recebido do SUP`, `pedido redistribuido`
+4. SUP: `backup enviado ao ADM`
+5. Entregador: `rastreador atualizado pedido=... -> rastreador-2`
+6. `.\scripts\demo_falha_rastreador.ps1` — confirmar roteamento no R2
+
+Logs podem ser silenciados com `PRESENTATION_LOG=0`.
 
 ## O que ainda nao esta nesta versao
 
-- Processos separados para R1, R2 e SUP
-- Cliente e entregador consumindo/publicando via RabbitMQ
-- Demo E2E completa (pedido → rastreio → confirmacao)
 - Replicacao do mapa pedido → rastreador entre ADMs
+- Teste automatizado de falha com multiplos processos reais
+- Exemplos de payload HTTP no README

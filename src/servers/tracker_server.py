@@ -3,9 +3,12 @@
 from typing import Any
 from uuid import UUID
 
-from src.core.models import EventoLocalizacao, LocalizacaoEntregador
+from src.core.models import EventoLocalizacao, LocalizacaoEntregador, AtualizacaoRoteamento
 from src.core.serialization import to_message_dict
 from src.servers.support_server import SupportServer
+
+from src.broker.topology import EXCHANGE_RASTREIO, routing_desconexao, routing_localizacao
+from src.presentation_log import log_apresentacao
 
 
 class TrackerServer:
@@ -43,6 +46,11 @@ class TrackerServer:
 
         anterior = self.ultimas_localizacoes.get(localizacao.idPedido)
         if anterior and anterior.timestamp >= localizacao.timestamp:
+            log_apresentacao(
+                f"rastreador {self.id_servidor}",
+                f"localizacao ignorada: pedido={localizacao.idPedido} "
+                f"ts={localizacao.timestamp} <= anterior={anterior.timestamp}",
+            )
             return
 
         self.ultimas_localizacoes[localizacao.idPedido] = localizacao
@@ -60,7 +68,7 @@ class TrackerServer:
         if self.publisher is None:
             return
         self.publisher.publish(
-            exchange="rastreio",
+            exchange=EXCHANGE_RASTREIO,
             routing_key=f"pedido.{evento.idPedido}",
             message=to_message_dict(evento),
         )
@@ -71,7 +79,7 @@ class TrackerServer:
         id_pedido = self.pedidos_por_entregador.get(id_entregador)
         if self.publisher and id_pedido:
             self.publisher.publish(
-                exchange="rastreio",
+                exchange=EXCHANGE_RASTREIO,
                 routing_key=f"pedido.{id_pedido}.desconexao",
                 message={"idPedido": str(id_pedido), "idEntregador": id_entregador},
             )
@@ -92,3 +100,30 @@ class TrackerServer:
     async def _sincronizar_suporte(self) -> None:
         if self.support_server is not None:
             await self.support_server.sincronizar_rastreios(self.snapshot_rastreios())
+
+
+    async def processar_atualizacao_roteamento(
+        self, atualizacao: AtualizacaoRoteamento
+    ) -> None:
+        """Register an order assigned to this tracker by ADM."""
+        if atualizacao.idServidorRastreador != self.id_servidor:
+            return
+        if not atualizacao.idEntregador:
+            raise ValueError("atualizacao de roteamento sem idEntregador")
+        await self.registrar_entregador(atualizacao.idEntregador, atualizacao.idPedido)
+        log_apresentacao(
+            f"rastreador {self.id_servidor}",
+            f"pedido {atualizacao.idPedido} atribuido ao entregador "
+            f"{atualizacao.idEntregador}",
+        )
+    
+    async def processar_localizacao_entregador(
+            self, localizacao: LocalizacaoEntregador
+    ) -> None:
+        """Receive driver GPS from RabbitMQ and publish EventoLocalizacao."""
+        await self.receber_localizacao(localizacao)
+        log_apresentacao(
+            f"rastreador {self.id_servidor}",
+            f"localizacao recebida: pedido={localizacao.idPedido} "
+            f"lat={localizacao.latitude} lon={localizacao.longitude}",
+        )

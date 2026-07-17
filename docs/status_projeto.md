@@ -8,10 +8,10 @@ Ultima validacao:
 
 ```text
 pytest -q
-75 passed
+94 passed
 
 # sem RabbitMQ (docker compose stop):
-# 72 passed, 3 skipped
+# 91 passed, 3 skipped
 
 pytest -q -m integration
 3 passed
@@ -125,19 +125,19 @@ pytest -q -m integration
 - [x] Ignorar localizacao antiga por timestamp.
 - [x] Sincronizar rastreios com SUP.
 - [x] Notificar desconexao de entregador.
-- [ ] Rodar R como processo proprio.
-- [ ] Consumir `LocalizacaoEntregador` real via RabbitMQ.
-- [ ] Encaminhar eventos reais para cliente via RabbitMQ.
-- [ ] Enviar `KeepAlive` periodico ao ADM.
+- [x] Rodar R como processo proprio.
+- [x] Consumir `LocalizacaoEntregador` real via RabbitMQ.
+- [x] Encaminhar eventos reais para cliente via RabbitMQ.
+- [x] Enviar `KeepAlive` periodico ao ADM.
 
 ## Servidor SUP
 
 - [x] Manter backup dos rastreios de um R associado.
 - [x] Retornar lista de backup ao ADM.
 - [x] Guardar horario do ultimo sync.
-- [ ] Rodar SUP como processo proprio.
-- [ ] Receber sincronizacao real do R via mensagem ou endpoint.
-- [ ] Avisar/atender ADM em cenario real de falha.
+- [x] Rodar SUP como processo proprio.
+- [x] Receber sincronizacao real do R via mensagem ou endpoint.
+- [x] Avisar/atender ADM em cenario real de falha.
 
 ## Clientes Mock
 
@@ -147,9 +147,9 @@ pytest -q -m integration
 - [x] Criar `mock_driver.py`.
 - [x] Gerar coordenadas falsas.
 - [x] Enviar localizacoes periodicas quando conectado a um Tracker injetado.
-- [ ] Fazer mock customer assinar rastreio real via RabbitMQ.
-- [ ] Fazer mock driver publicar `LocalizacaoEntregador` real via RabbitMQ.
-- [ ] Criar modo de demo com comandos simples.
+- [x] Fazer mock customer assinar rastreio real via RabbitMQ.
+- [x] Fazer mock driver publicar `LocalizacaoEntregador` real via RabbitMQ.
+- [x] Criar modo de demo com comandos simples.
 
 ## Testes
 
@@ -179,54 +179,57 @@ pytest -q -m integration
 ## Demonstracao Fim a Fim
 
 - [x] Criar script para subir ADM.
-- [ ] Criar script para subir R1.
-- [ ] Criar script para subir R2.
-- [ ] Criar script para subir SUP de R1.
-- [ ] Criar script para cliente.
-- [ ] Criar script para entregador.
-- [ ] Cliente cria pedido.
-- [ ] Entregador recebe pedido disponivel.
-- [ ] Entregador aceita pedido.
-- [ ] ADM atribui pedido a um R.
-- [ ] Entregador envia localizacoes.
-- [ ] Cliente recebe localizacoes.
-- [ ] Cliente confirma entrega.
+- [x] Criar script para subir R1.
+- [x] Criar script para subir R2.
+- [x] Criar script para subir SUP de R1.
+- [x] Criar script para cliente.
+- [x] Criar script para entregador.
+- [x] Cliente cria pedido.
+- [x] Entregador recebe pedido disponivel.
+- [x] Entregador aceita pedido.
+- [x] ADM atribui pedido a um R.
+- [x] Entregador envia localizacoes.
+- [x] Cliente recebe localizacoes.
+- [x] Cliente confirma entrega.
 
 ## Demonstracao de Falha
 
-- [ ] Subir pelo menos dois servidores R.
-- [ ] Associar pedido ao R1.
-- [ ] Sincronizar backup no SUP.
-- [ ] Simular queda do R1.
-- [ ] ADM detectar ausencia de `KeepAlive`.
-- [ ] ADM solicitar backup ao SUP.
-- [ ] ADM redistribuir pedido para R2.
-- [ ] Mostrar rastreio continuando pelo novo servidor.
+- [x] Subir pelo menos dois servidores R.
+- [x] Associar pedido ao R1.
+- [x] Sincronizar backup no SUP.
+- [x] Simular queda do R1.
+- [x] ADM detectar ausencia de `KeepAlive`.
+- [x] ADM solicitar backup ao SUP.
+- [x] ADM redistribuir pedido para R2.
+- [x] Mostrar rastreio continuando pelo novo servidor.
 
 ## Logs de Apresentacao
 
-- [ ] Logar pedido criado.
-- [ ] Logar pedido aceito.
-- [ ] Logar servidor rastreador escolhido.
-- [ ] Logar localizacao recebida.
-- [ ] Logar localizacao ignorada por timestamp antigo.
-- [ ] Logar heartbeat recebido.
-- [ ] Logar falha detectada.
-- [ ] Logar backup recebido do SUP.
-- [ ] Logar pedido redistribuido.
-- [ ] Logar novo lider eleito.
+- [x] Logar pedido criado (`[adm]` + `[cliente]`).
+- [x] Logar pedido aceito (`[adm]` + `[entregador]`).
+- [x] Logar servidor rastreador escolhido (`[adm]` na aceitacao + `[rastreador]` no roteamento).
+- [x] Logar localizacao recebida (`[rastreador]` + `[cliente]`).
+- [x] Logar localizacao ignorada por timestamp antigo (`[rastreador]`).
+- [x] Logar heartbeat recebido (primeira ativacao do rastreador no lider ADM).
+- [x] Logar falha detectada (`[adm]` ao processar heartbeat expirado).
+- [x] Logar backup recebido do SUP (`[adm]` + `[sup]` no GET `/backup`).
+- [x] Logar pedido redistribuido (`[adm]`).
+- [x] Logar novo lider eleito (`[adm]` na eleicao Bully).
+
+Desabilitar logs: `PRESENTATION_LOG=0`.
 
 ## Proximos Passos Recomendados
 
 - [x] Criar `docker-compose.yml` do RabbitMQ.
 - [x] Criar scripts de execucao dos componentes.
 - [x] Implementar demo local com multiplos processos.
-- [ ] Adicionar logs de apresentacao.
+- [x] Adicionar logs de apresentacao.
 - [x] Atualizar README com roteiro final.
 
 ## Observacoes
 
 - [x] Projeto correto como prova de conceito em memoria seguindo o PDF.
 - [x] Testes atuais passando.
-- [x] Demo ADM com 3 processos e RabbitMQ real implementadas; falta E2E completo (R, SUP, cliente e entregador via broker).
+- [x] Demo ADM com 3 processos e RabbitMQ real implementadas.
+- [x] Demo E2E completa (R1/R2, SUP, cliente e entregador via broker) e failover manual validados.
 - [x] Atualizar este checklist sempre que uma etapa nova for implementada.

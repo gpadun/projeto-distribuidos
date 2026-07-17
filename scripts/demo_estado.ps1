@@ -14,6 +14,11 @@ foreach ($adm in $adms) {
         Write-Host "souLider       : $($lider.souLider)"
         Write-Host "liderAtual     : $($lider.liderAtual)"
         Write-Host "admsAtivos     : $($estado.admsAtivos -join ', ')"
+        Write-Host "rastreadoresAtivos: $($estado.rastreadoresAtivos -join ', ')"
+        if (-not $estado.rastreadoresAtivos) {
+            Write-Host "  (vazio e normal antes de subir os rastreadores)"
+        }
+        Write-Host "rastreadoresExpirados: $($estado.rastreadoresComHeartbeatExpirado -join ', ')"
         Write-Host "aguardandoEleicao : $($estado.aguardandoEleicao)"
         Write-Host "idLiderAnterior   : $($estado.idLiderAnterior)"
     }

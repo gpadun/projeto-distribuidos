@@ -33,6 +33,8 @@ $env:RABBITMQ_HOST = "127.0.0.1"
 $env:RABBITMQ_PORT = "5672"
 $env:RABBITMQ_USER = "dsid"
 $env:RABBITMQ_PASSWORD = "dsid123"
+$env:SUP_URL_RASTREADOR_1 = "http://127.0.0.1:9101"
+$env:SUP_URL_RASTREADOR_2 = "http://127.0.0.1:9102"
 
 Write-Host "Subindo $AdmId em http://127.0.0.1:$Port"
 Write-Host "Peers: $peers"

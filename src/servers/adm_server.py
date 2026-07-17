@@ -1,6 +1,8 @@
 """Administrator server (ADM)."""
 
 import re
+
+import httpx
 from time import time
 from typing import Any
 from uuid import UUID
@@ -30,8 +32,10 @@ from src.broker.topology import (
     EXCHANGE_PEDIDOS,
     ROUTING_PEDIDO_DISPONIVEL,
     routing_entrega_confirmada,
+    routing_rastreador_atualizado,
     routing_roteamento,
 )
+from src.presentation_log import log_apresentacao
 
 
 class NaoELiderError(Exception):
@@ -60,11 +64,12 @@ class ADMServer:
         on_lider_caiu: Callable[[str], Awaitable[None]] | None = None,
         election_sender: Callable[[str, IniciarEleicao | RespostaEleicao | NovoLider], Awaitable[None]] | None = None,
         eleicao_timeout: float = 2.0,
+        support_urls: dict[str, str] | None = None,
     ):
         self.id_servidor = id_servidor
         self.publisher = publisher
         self.servidores_rastreadores = list(servidores_rastreadores or [])
-        self.servidores_rastreadores_ativos = set(self.servidores_rastreadores)
+        self.servidores_rastreadores_ativos: set[str] = set()
         self.support_servers = support_servers or {}
         self.heartbeat_timeout = heartbeat_timeout
         self.keepalive_sender = keepalive_sender
@@ -76,9 +81,7 @@ class ADMServer:
         self.pedidos: dict[UUID, Pedido] = {}
         self.pedidos_sem_entregador: dict[UUID, Pedido] = {}
         self.mapa_pedido_servidor: dict[UUID, str] = {}
-        self.ultimo_keepalive: dict[str, float] = {
-            id_servidor: instante_inicial for id_servidor in self.servidores_rastreadores
-        }
+        self.ultimo_keepalive: dict[str, float] = {}
 
         self.servidores_adm = sorted(set(servidores_adm or [id_servidor]))
         self.lider_atual = self._maior_id(self.servidores_adm)
@@ -92,6 +95,8 @@ class ADMServer:
         self.id_lider_anterior: str | None = None
         self.eleicao_em_andamento: bool = False
         self.recebeu_resposta_de_maior: bool = False
+
+        self.support_urls = support_urls or {}
     
 
     async def criar_pedido(self, requisicao: CriarPedido) -> Pedido:
@@ -112,6 +117,10 @@ class ADMServer:
             timestamp=pedido.timestamp,
         )
         self._publish(EXCHANGE_PEDIDOS, ROUTING_PEDIDO_DISPONIVEL, evento)
+        log_apresentacao(
+            f"adm {self.id_servidor}",
+            f"pedido criado: {pedido.idPedido} cliente={pedido.idCliente}",
+        )
         return pedido
 
     async def aceitar_pedido(self, requisicao: AceitarPedido) -> Pedido:
@@ -131,9 +140,15 @@ class ADMServer:
         atualizacao = AtualizacaoRoteamento(
             idPedido=requisicao.idPedido,
             idServidorRastreador=servidor,
+            idEntregador=requisicao.idEntregador,
             timestamp=requisicao.timestamp,
         )
         self._publish(EXCHANGE_INFRA, routing_roteamento(servidor), atualizacao)
+        log_apresentacao(
+            f"adm {self.id_servidor}",
+            f"pedido aceito: {requisicao.idPedido} entregador={requisicao.idEntregador} "
+            f"rastreador={servidor}",
+        )
         return pedido
 
     async def confirmar_entrega(self, requisicao: ConfirmarEntrega) -> EntregaConfirmada:
@@ -163,7 +178,13 @@ class ADMServer:
             mensagem.tipoServidor == TipoServidor.RASTREADOR
             and mensagem.idServidor in self.servidores_rastreadores
         ):
+            novo_ativo = mensagem.idServidor not in self.servidores_rastreadores_ativos
             self.servidores_rastreadores_ativos.add(mensagem.idServidor)
+            if novo_ativo and self.sou_lider():
+                log_apresentacao(
+                    f"adm {self.id_servidor}",
+                    f"heartbeat recebido: {mensagem.idServidor} (rastreador ativo)",
+                )
 
         elif (
             mensagem.tipoServidor == TipoServidor.ADM 
@@ -217,43 +238,80 @@ class ADMServer:
     
     async def detectar_falha_servidor_rastreador(self, id_servidor: str) -> dict[UUID, str]:
         """Remove a failed tracker and redistribute its orders to active trackers."""
+        if id_servidor not in self.servidores_rastreadores_ativos:
+            return {}
+
+        log_apresentacao(
+            f"adm {self.id_servidor}",
+            f"falha detectada: rastreador {id_servidor} (heartbeat expirado)",
+        )
+        backup = await self._buscar_backup_sup(id_servidor)
+        log_apresentacao(
+            f"adm {self.id_servidor}",
+            f"backup recebido do SUP para {id_servidor}: {len(backup)} pedido(s)",
+        )
         self.servidores_rastreadores_ativos.discard(id_servidor)
+
         afetados = [
             id_pedido
             for id_pedido, servidor in self.mapa_pedido_servidor.items()
             if servidor == id_servidor
         ]
-
-        support = self.support_servers.get(id_servidor)
-        if support is not None:
-            backup = await support.enviar_lista_backup()
-            afetados_set = set(afetados)
-            for id_pedido_str in backup:
-                try:
-                    pedido_uuid = UUID(id_pedido_str)
-                except (TypeError, ValueError):
-                    continue
-                if pedido_uuid not in afetados_set:
-                    afetados.append(pedido_uuid)
-                    afetados_set.add(pedido_uuid)
+        afetados_set = set(afetados)
+        for id_pedido_str in backup:
+            try:
+                pedido_uuid = UUID(id_pedido_str)
+            except (TypeError, ValueError):
+                continue
+            if pedido_uuid not in afetados_set:
+                afetados.append(pedido_uuid)
+                afetados_set.add(pedido_uuid)
 
         redistribuidos: dict[UUID, str] = {}
         for id_pedido in afetados:
+            if not self.servidores_rastreadores_ativos:
+                break
+
             novo_servidor = self._escolher_servidor_rastreador(id_pedido)
-            self.mapa_pedido_servidor[id_pedido] = novo_servidor
             pedido = self.pedidos.get(id_pedido)
+            id_entregador = pedido.idEntregador if pedido else None
+            if not id_entregador:
+                dados = backup.get(str(id_pedido), {})
+                id_entregador = dados.get("idEntregador")
+
+            self.mapa_pedido_servidor[id_pedido] = novo_servidor
             if pedido:
                 pedido.servidorRastreadorResponsavel = novo_servidor
             redistribuidos[id_pedido] = novo_servidor
+
             self._publish(
                 EXCHANGE_INFRA,
                 routing_roteamento(novo_servidor),
                 AtualizacaoRoteamento(
                     idPedido=id_pedido,
                     idServidorRastreador=novo_servidor,
+                    idEntregador=id_entregador,
                     timestamp=int(time()),
                 ),
             )
+
+            if id_entregador:
+                self._publish(
+                    EXCHANGE_PEDIDOS,
+                    routing_rastreador_atualizado(id_pedido),
+                    {
+                        "idPedido": str(id_pedido),
+                        "idServidorRastreador": novo_servidor,
+                        "idEntregador": id_entregador,
+                        "timestamp": int(time()),
+                    },
+                )
+
+            log_apresentacao(
+                f"adm {self.id_servidor}",
+                f"pedido redistribuido: {id_pedido} {id_servidor} -> {novo_servidor}",
+            )
+
         return redistribuidos
 
     async def iniciar_eleicao(self) -> str:
@@ -303,7 +361,8 @@ class ADMServer:
 
     def _publish(self, exchange: str, routing_key: str, model) -> None:
         if self.publisher is not None:
-            self.publisher.publish(exchange, routing_key, to_message_dict(model))
+            message = model if isinstance(model, dict) else to_message_dict(model)
+            self.publisher.publish(exchange, routing_key, message)
 
     @staticmethod
     def _maior_id(ids: list[str]) -> str:
@@ -381,6 +440,10 @@ class ADMServer:
         self.lider_disponivel = False
         self.aguardando_eleicao = True
         self.servidores_adm_ativos.discard(self.lider_atual)
+        log_apresentacao(
+            f"adm {self.id_servidor}",
+            f"falha do lider detectada: {self.id_lider_anterior}",
+        )
 
         if self.on_lider_caiu is not None:
             await self.on_lider_caiu(self.id_lider_anterior)
@@ -390,7 +453,13 @@ class ADMServer:
     async def executar_ciclo_monitoramento(self) -> bool:
         await self.executar_ciclo_keepalive()
         self.processar_expiracao_adms()
-        return await self.detectar_falha_lider()
+        falha_lider = await self.detectar_falha_lider()
+        
+        if self.sou_lider():
+            for id_rastreador in self.servidores_com_heartbeat_expirado():
+                await self.detectar_falha_servidor_rastreador(id_rastreador)
+
+        return falha_lider
     
     async def _enviar_iniciar_eleicao(self, id_destino: str) -> None:
         if self.election_sender is None:
@@ -444,6 +513,11 @@ class ADMServer:
         for id_adm in self._adms_ativos_com_id_menor_que(self.id_servidor):
             await self._enviar_novo_lider(id_adm, mensagem)
 
+        log_apresentacao(
+            f"adm {self.id_servidor}",
+            f"novo lider eleito: {self.id_servidor} "
+            f"(anterior: {self.id_lider_anterior or '?'})",
+        )
         return self.lider_atual
     
     async def processar_iniciar_eleicao(self, mensagem: IniciarEleicao) -> None:
@@ -461,7 +535,27 @@ class ADMServer:
             self.recebeu_resposta_de_maior = True
 
     async def processar_novo_lider(self, mensagem: NovoLider) -> None:
+        if mensagem.idServidor != self.lider_atual:
+            log_apresentacao(
+                f"adm {self.id_servidor}",
+                f"novo lider eleito: {mensagem.idServidor} "
+                f"(anterior: {mensagem.idLiderAnterior or '?'})",
+            )
         self.lider_atual = mensagem.idServidor
         self.lider_disponivel = True
         self.aguardando_eleicao = False
         self.eleicao_em_andamento = False
+
+    async def _buscar_backup_sup(self, id_rastreador: str) -> dict:
+        support = self.support_servers.get(id_rastreador)
+        if support is not None:
+            return await support.enviar_lista_backup()
+        
+        url = self.support_urls.get(id_rastreador)
+        if not url:
+            return {}
+
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{url.rstrip('/')}/backup")
+            response.raise_for_status()
+            return response.json()

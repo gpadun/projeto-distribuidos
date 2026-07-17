@@ -32,6 +32,14 @@ def parse_adm_peers(raw: str) -> dict[str, str]:
     return enderecos
 
 
+def _carregar_support_urls() -> dict[str, str]:
+    mapping = {
+        "rastreador-1": os.getenv("SUP_URL_RASTREADOR_1", ""),
+        "rastreador-2": os.getenv("SUP_URL_RASTREADOR_2", ""),
+    }
+    return {k: v for k, v in mapping.items() if v}
+
+
 def _criar_adm_padrao(publisher: Publisher | None) -> ADMServer:
     """Build the default ADM instance for this process."""
     id_servidor = os.getenv("ADM_ID", "adm-1")
@@ -43,6 +51,8 @@ def _criar_adm_padrao(publisher: Publisher | None) -> ADMServer:
     servidores_rastreadores = ["rastreador-1", "rastreador-2"]
     peers_raw = os.getenv("ADM_PEERS", "")
     enderecos = parse_adm_peers(peers_raw) if peers_raw else {}
+    support_urls = _carregar_support_urls()
+    heartbeat_timeout = float(os.getenv("ADM_HEARTBEAT_TIMEOUT", "10"))
 
     if enderecos:
         return criar_adm_com_transporte_http(
@@ -51,6 +61,8 @@ def _criar_adm_padrao(publisher: Publisher | None) -> ADMServer:
             servidores_adm=servidores_adm,
             servidores_rastreadores=servidores_rastreadores,
             publisher=publisher,
+            support_urls=support_urls,
+            heartbeat_timeout=heartbeat_timeout,
         )
 
     return ADMServer(
@@ -58,6 +70,8 @@ def _criar_adm_padrao(publisher: Publisher | None) -> ADMServer:
         servidores_adm=servidores_adm,
         servidores_rastreadores=servidores_rastreadores,
         publisher=publisher,
+        support_urls=support_urls,
+        heartbeat_timeout=heartbeat_timeout,
     )
 
 
@@ -184,6 +198,7 @@ def create_app(adm_server: ADMServer | None = None) -> FastAPI:
             "pedidos": list(adm.pedidos.keys()),
             "roteamento": {str(k): v for k, v in adm.mapa_pedido_servidor.items()},
             "rastreadoresAtivos": sorted(adm.servidores_rastreadores_ativos),
+            "rastreadoresComHeartbeatExpirado": adm.servidores_com_heartbeat_expirado(),
             "admsAtivos": sorted(adm.servidores_adm_ativos),
             "admsComHeartbeatExpirado": adm.adms_com_heartbeat_expirado(),
             "liderDisponivel": adm.lider_disponivel,
