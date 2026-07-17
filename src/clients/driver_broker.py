@@ -1,4 +1,4 @@
-"""Driver lient that listen to PedidoDisponivel on RabbitMQ."""
+"""Driver client that listen to PedidoDisponivel on RabbitMQ."""
 
 import logging
 import os
