@@ -1,10 +1,11 @@
 """Tests for driver broker client."""
 
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import httpx
 import pytest
 
+from src.broker.config import BrokerSettings
 from src.clients.driver_broker import (
     DriverBrokerError,
     aceitar_pedido_via_adm,
@@ -104,6 +105,7 @@ def test_aceitar_pedido_via_adm_retorna_erro_quando_nao_e_lider(monkeypatch):
 def test_callback_imprime_e_aceita_pedido(monkeypatch, capsys):
     id_pedido = uuid4()
     aceitos = []
+    threads = []
 
     monkeypatch.setattr(
         "src.clients.driver_broker.aceitar_pedido_via_adm",
@@ -113,10 +115,21 @@ def test_callback_imprime_e_aceita_pedido(monkeypatch, capsys):
         or {"idPedido": str(pedido_id), "servidorRastreadorResponsavel": "rastreador-2"},
     )
 
+    class FakeThread:
+        def __init__(self, target, args=(), daemon=False):
+            del target, args, daemon
+
+        def start(self):
+            threads.append(self)
+
+    monkeypatch.setattr("src.clients.driver_broker.threading.Thread", FakeThread)
+
+    settings = BrokerSettings(enabled=True)
     callback = criar_callback_pedido_disponivel(
         id_entregador="entregador-1",
         adm_url="http://127.0.0.1:8003",
         aceitar_automatico=True,
+        broker_settings=settings,
     )
     callback(
         {
@@ -128,4 +141,5 @@ def test_callback_imprime_e_aceita_pedido(monkeypatch, capsys):
 
     assert len(aceitos) == 1
     assert aceitos[0][2] == id_pedido
+    assert len(threads) == 1
     assert "pedido disponivel" in capsys.readouterr().out

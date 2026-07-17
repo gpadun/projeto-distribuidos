@@ -1,15 +1,18 @@
 """Driver client that listens to PedidoDisponivel on RabbitMQ."""
 
 import os
-from time import time
+import time
 from uuid import UUID
+import asyncio
+import random
+import threading
 
 import httpx
 
 from src.broker.config import BrokerSettings
-from src.broker.factory import criar_subscriber, fechar_subscriber
-from src.broker.topology import EXCHANGE_PEDIDOS, ROUTING_PEDIDO_DISPONIVEL
-from src.core.models import AceitarPedido, PedidoDisponivel
+from src.broker.factory import criar_subscriber, fechar_subscriber, criar_publisher, fechar_publisher
+from src.broker.topology import EXCHANGE_PEDIDOS, ROUTING_PEDIDO_DISPONIVEL, EXCHANGE_LOCALIZACAO, routing_localizacao_para_rastreador
+from src.core.models import AceitarPedido, PedidoDisponivel, LocalizacaoEntregador
 from src.core.serialization import to_message_dict
 
 
@@ -32,7 +35,7 @@ def aceitar_pedido_via_adm(
     requisicao = AceitarPedido(
         idPedido=id_pedido,
         idEntregador=id_entregador,
-        timestamp=int(time()),
+        timestamp=int(time.time()),
     )
     url = f"{adm_url.rstrip('/')}/pedidos/aceitar"
 
@@ -59,8 +62,11 @@ def criar_callback_pedido_disponivel(
     id_entregador: str,
     adm_url: str,
     aceitar_automatico: bool,
+    broker_settings: BrokerSettings,
+    intervalo_gps: float = 2.0,
 ):
     """Build the RabbitMQ callback for PedidoDisponivel events."""
+    pedidos_aceitos: set[UUID] = set()
 
     def callback(payload: dict) -> None:
         evento = parse_pedido_disponivel(payload)
@@ -72,11 +78,32 @@ def criar_callback_pedido_disponivel(
         if not aceitar_automatico:
             return
         
+        if evento.idPedido in pedidos_aceitos:
+            return
+        
         resultado = aceitar_pedido_via_adm(adm_url, id_entregador, evento.idPedido)
+        pedidos_aceitos.add(evento.idPedido)
+        id_rastreador = resultado.get("servidorRastreadorResponsavel")
         print(
             f"[entregador] pedido aceito: idPedido={resultado.get('idPedido')} "
-            f"rastreador={resultado.get('servidorRastreadorResponsavel')}"
+            f"rastreador={id_rastreador}"
         )
+
+        if not id_rastreador:
+            return
+        
+        thread = threading.Thread(
+            target=_publicar_localizacoes_periodicas,
+            args=(
+                id_entregador,
+                evento.idPedido,
+                id_rastreador,
+                intervalo_gps,
+                broker_settings,
+            ),
+            daemon=True,
+        )
+        thread.start()
 
     return callback
 
@@ -86,6 +113,7 @@ def executar_entregador_broker(
         adm_url: str | None = None,
         aceitar_automatico: bool = True,
         broker_settings: BrokerSettings | None = None,
+        intervalo_gps: float = 2.0,
 ) -> None:
     """Subscribe to PedidoDisponivel and block until interrupted."""
     settings = broker_settings or BrokerSettings.from_env()
@@ -103,6 +131,8 @@ def executar_entregador_broker(
         id_entregador=id_entregador,
         adm_url=adm_url,
         aceitar_automatico=aceitar_automatico,
+        broker_settings=settings,
+        intervalo_gps=intervalo_gps,
     )
 
     subscriber.subscribe(EXCHANGE_PEDIDOS, ROUTING_PEDIDO_DISPONIVEL, callback)
@@ -117,3 +147,44 @@ def executar_entregador_broker(
         print("[entregador] encerrando...")
     finally:
         fechar_subscriber(subscriber)
+
+
+def _publicar_localizacoes_periodicas(
+    id_entregador: str,
+    id_pedido: UUID,
+    id_rastreador: str,
+    intervalo_segundos: float,
+    broker_settings: BrokerSettings,
+) -> None:
+    publisher = criar_publisher(broker_settings)
+    if publisher is None:
+        return
+    
+    latitude = -23.55052
+    longitude = -46.633308
+
+    try:
+        while True:
+            latitude += random.uniform(-0.001, 0.001)
+            longitude += random.uniform(-0.001, 0.001)
+            localizacao = LocalizacaoEntregador(
+                idEntregador=id_entregador,
+                idPedido=id_pedido,
+                latitude=round(latitude, 6),
+                longitude=round(longitude, 6),
+                timestamp=int(time.time()),
+            )
+            publisher.publish(
+                EXCHANGE_LOCALIZACAO,
+                routing_localizacao_para_rastreador(id_rastreador),
+                to_message_dict(localizacao),
+            )
+            print(
+                f"[entregador] localizacao enviada pedido={id_pedido} "
+                f"rastreador={id_rastreador}"
+            )
+            time.sleep(intervalo_segundos)
+    except Exception as exc:
+        print(f"[entregador] erro ao publicar localizacao: {exc}")
+    finally:
+        fechar_publisher(publisher)

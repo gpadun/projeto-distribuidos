@@ -131,6 +131,7 @@ class ADMServer:
         atualizacao = AtualizacaoRoteamento(
             idPedido=requisicao.idPedido,
             idServidorRastreador=servidor,
+            idEntregador=requisicao.idEntregador,
             timestamp=requisicao.timestamp,
         )
         self._publish(EXCHANGE_INFRA, routing_roteamento(servidor), atualizacao)

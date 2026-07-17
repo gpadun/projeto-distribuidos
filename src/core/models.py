@@ -101,6 +101,7 @@ class AtualizacaoRoteamento(BaseModel):
 
     idPedido: UUID
     idServidorRastreador: str
+    idEntregador: str | None = None
     timestamp: int
 
 

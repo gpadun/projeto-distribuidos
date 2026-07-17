@@ -125,9 +125,9 @@ pytest -q -m integration
 - [x] Ignorar localizacao antiga por timestamp.
 - [x] Sincronizar rastreios com SUP.
 - [x] Notificar desconexao de entregador.
-- [ ] Rodar R como processo proprio.
-- [ ] Consumir `LocalizacaoEntregador` real via RabbitMQ.
-- [ ] Encaminhar eventos reais para cliente via RabbitMQ.
+- [x] Rodar R como processo proprio.
+- [x] Consumir `LocalizacaoEntregador` real via RabbitMQ.
+- [x] Encaminhar eventos reais para cliente via RabbitMQ.
 - [ ] Enviar `KeepAlive` periodico ao ADM.
 
 ## Servidor SUP
@@ -147,7 +147,7 @@ pytest -q -m integration
 - [x] Criar `mock_driver.py`.
 - [x] Gerar coordenadas falsas.
 - [x] Enviar localizacoes periodicas quando conectado a um Tracker injetado.
-- [ ] Fazer mock customer assinar rastreio real via RabbitMQ.
+- [x] Fazer mock customer assinar rastreio real via RabbitMQ.
 - [ ] Fazer mock driver publicar `LocalizacaoEntregador` real via RabbitMQ.
 - [ ] Criar modo de demo com comandos simples.
 
@@ -179,17 +179,17 @@ pytest -q -m integration
 ## Demonstracao Fim a Fim
 
 - [x] Criar script para subir ADM.
-- [ ] Criar script para subir R1.
+- [x] Criar script para subir R1.
 - [ ] Criar script para subir R2.
 - [ ] Criar script para subir SUP de R1.
-- [ ] Criar script para cliente.
+- [x] Criar script para cliente.
 - [x] Criar script para entregador.
-- [ ] Cliente cria pedido.
+- [x] Cliente cria pedido.
 - [x] Entregador recebe pedido disponivel.
 - [x] Entregador aceita pedido.
 - [ ] ADM atribui pedido a um R.
 - [ ] Entregador envia localizacoes.
-- [ ] Cliente recebe localizacoes.
+- [x] Cliente recebe localizacoes.
 - [ ] Cliente confirma entrega.
 
 ## Demonstracao de Falha
