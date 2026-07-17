@@ -1,7 +1,6 @@
 """Console simulator for a customer."""
 
 import argparse
-import asyncio
 from time import time
 from uuid import uuid4, UUID
 import os

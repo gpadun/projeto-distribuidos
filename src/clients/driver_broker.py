@@ -1,6 +1,5 @@
-"""Driver client that listen to PedidoDisponivel on RabbitMQ."""
+"""Driver client that listens to PedidoDisponivel on RabbitMQ."""
 
-import logging
 import os
 from time import time
 from uuid import UUID
@@ -12,8 +11,6 @@ from src.broker.factory import criar_subscriber, fechar_subscriber
 from src.broker.topology import EXCHANGE_PEDIDOS, ROUTING_PEDIDO_DISPONIVEL
 from src.core.models import AceitarPedido, PedidoDisponivel
 from src.core.serialization import to_message_dict
-
-logger = logging.getLogger(__name__)
 
 
 class DriverBrokerError(RuntimeError):
