@@ -8,10 +8,10 @@ Ultima validacao:
 
 ```text
 pytest -q
-94 passed
+95 passed
 
 # sem RabbitMQ (docker compose stop):
-# 91 passed, 3 skipped
+# 92 passed, 3 skipped
 
 pytest -q -m integration
 3 passed
@@ -115,7 +115,7 @@ pytest -q -m integration
 - [x] Interpretar IDs como `adm-10` corretamente na escolha do maior ID.
 - [x] Simular multiplos ADMs em processos separados.
 - [x] Implementar troca real de mensagens de eleicao entre ADMs.
-- [ ] Replicar mapa pedido -> servidor rastreador entre ADMs.
+- [x] Replicar mapa pedido -> servidor rastreador entre ADMs.
 
 ## Servidor Rastreador R
 

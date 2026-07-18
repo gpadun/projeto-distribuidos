@@ -15,9 +15,11 @@ from src.core.models import (
     IniciarEleicao,
     KeepAlive,
     NovoLider,
+    ReplicacaoRoteamento,
     RespostaEleicao,
 )
 from src.infra.adm_transport import criar_adm_com_transporte_http
+from src.core.serialization import to_message_dict
 from src.servers.adm_server import ADMServer, NaoELiderError
 
 
@@ -107,7 +109,10 @@ def create_app(adm_server: ADMServer | None = None) -> FastAPI:
         async def loop_monitoramento():
             intervalo = float(os.getenv("ADM_HEARTBEAT_INTERVAL", "5"))
             while True:
-                await adm.executar_ciclo_monitoramento()
+                try:
+                    await adm.executar_ciclo_monitoramento()
+                except Exception as exc:
+                    print(f"[adm {adm.id_servidor}] erro no monitor: {exc}")
                 await asyncio.sleep(intervalo)
 
         task = asyncio.create_task(loop_monitoramento())
@@ -181,6 +186,11 @@ def create_app(adm_server: ADMServer | None = None) -> FastAPI:
         await adm.processar_novo_lider(mensagem)
         return {"ok": True}
 
+    @app.post("/infra/replicar-roteamento")
+    async def replicar_roteamento(mensagem: ReplicacaoRoteamento):
+        await adm.processar_replicacao_roteamento(mensagem)
+        return {"ok": True}
+
     @app.get("/infra/lider")
     async def consultar_lider():
         return {
@@ -196,6 +206,11 @@ def create_app(adm_server: ADMServer | None = None) -> FastAPI:
             "liderAtual": adm.lider_atual,
             "souLider": adm.sou_lider(),
             "pedidos": list(adm.pedidos.keys()),
+            "pedidosDetalhe": {
+                str(id_pedido): to_message_dict(pedido)
+                for id_pedido, pedido in adm.pedidos.items()
+            },
+            "pedidosSemEntregador": [str(id_pedido) for id_pedido in adm.pedidos_sem_entregador],
             "roteamento": {str(k): v for k, v in adm.mapa_pedido_servidor.items()},
             "rastreadoresAtivos": sorted(adm.servidores_rastreadores_ativos),
             "rastreadoresComHeartbeatExpirado": adm.servidores_com_heartbeat_expirado(),

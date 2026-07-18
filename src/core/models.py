@@ -138,6 +138,16 @@ class NovoLider(BaseModel):
     idLiderAnterior: str | None = None
 
 
+class ReplicacaoRoteamento(BaseModel):
+    """Full ADM state snapshot sent from the leader to peers."""
+
+    idServidorOrigem: str
+    roteamento: dict[str, str]
+    pedidos: dict[str, dict] = {}
+    pedidosSemEntregador: list[str] = []
+    timestamp: int
+
+
 class Cliente(BaseModel):
     """Customer identity."""
 

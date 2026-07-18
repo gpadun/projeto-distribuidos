@@ -21,6 +21,7 @@ foreach ($adm in $adms) {
         Write-Host "rastreadoresExpirados: $($estado.rastreadoresComHeartbeatExpirado -join ', ')"
         Write-Host "aguardandoEleicao : $($estado.aguardandoEleicao)"
         Write-Host "idLiderAnterior   : $($estado.idLiderAnterior)"
+        Write-Host "roteamento        : $($estado.roteamento | ConvertTo-Json -Compress)"
     }
     catch {
         Write-Host "OFFLINE ou erro: $($_.Exception.Message)"
