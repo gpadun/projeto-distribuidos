@@ -147,6 +147,8 @@ def test_criar_adm_com_transporte_http_configura_callbacks():
 
     assert adm.keepalive_sender is not None
     assert adm.election_sender is not None
+    assert adm.replication_sender is not None
+    assert adm.state_fetcher is not None
     assert adm.on_lider_caiu is not None
 
 

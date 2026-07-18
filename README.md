@@ -351,6 +351,7 @@ Resposta **409** em nao-lideres, com `liderAtual` no corpo.
 - `POST /infra/eleicao/iniciar`: recebe inicio de eleicao;
 - `POST /infra/eleicao/resposta`: recebe resposta de eleicao;
 - `POST /infra/eleicao/novo-lider`: propaga novo lider;
+- `POST /infra/replicar-roteamento`: replica mapa pedido → rastreador entre ADMs;
 - `GET /infra/lider`: consulta lider atual;
 - `GET /estado`: inspeciona estado do ADM (inclui `rabbitmqHabilitado`).
 
@@ -392,6 +393,6 @@ Logs podem ser silenciados com `PRESENTATION_LOG=0`.
 
 ## O que ainda nao esta nesta versao
 
-- Replicacao do mapa pedido → rastreador entre ADMs
 - Teste automatizado de falha com multiplos processos reais
 - Exemplos de payload HTTP no README
+- Secao unificada no README com todos os comandos de subida

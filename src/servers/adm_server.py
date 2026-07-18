@@ -22,6 +22,7 @@ from src.core.models import (
     IniciarEleicao,
     RespostaEleicao,
     NovoLider,
+    ReplicacaoRoteamento,
 )
 from src.core.routing import escolher_servidor_consistent_hash
 from src.core.serialization import to_message_dict
@@ -63,6 +64,8 @@ class ADMServer:
         keepalive_sender: Callable[[str, KeepAlive], Awaitable[None]] | None = None,
         on_lider_caiu: Callable[[str], Awaitable[None]] | None = None,
         election_sender: Callable[[str, IniciarEleicao | RespostaEleicao | NovoLider], Awaitable[None]] | None = None,
+        replication_sender: Callable[[str, ReplicacaoRoteamento], Awaitable[None]] | None = None,
+        state_fetcher: Callable[[str], Awaitable[dict]] | None = None,
         eleicao_timeout: float = 2.0,
         support_urls: dict[str, str] | None = None,
     ):
@@ -75,6 +78,8 @@ class ADMServer:
         self.keepalive_sender = keepalive_sender
         self.on_lider_caiu = on_lider_caiu
         self.election_sender = election_sender
+        self.replication_sender = replication_sender
+        self.state_fetcher = state_fetcher
         self.eleicao_timeout = eleicao_timeout
         instante_inicial = time()
 
@@ -121,6 +126,7 @@ class ADMServer:
             f"adm {self.id_servidor}",
             f"pedido criado: {pedido.idPedido} cliente={pedido.idCliente}",
         )
+        await self._propagar_roteamento()
         return pedido
 
     async def aceitar_pedido(self, requisicao: AceitarPedido) -> Pedido:
@@ -149,6 +155,7 @@ class ADMServer:
             f"pedido aceito: {requisicao.idPedido} entregador={requisicao.idEntregador} "
             f"rastreador={servidor}",
         )
+        await self._propagar_roteamento()
         return pedido
 
     async def confirmar_entrega(self, requisicao: ConfirmarEntrega) -> EntregaConfirmada:
@@ -169,6 +176,7 @@ class ADMServer:
         self.pedidos.pop(requisicao.idPedido, None)
         self.pedidos_sem_entregador.pop(requisicao.idPedido, None)
         self.mapa_pedido_servidor.pop(requisicao.idPedido, None)
+        await self._propagar_roteamento()
         return evento
 
     async def processar_keepalive(self, mensagem: KeepAlive) -> None:
@@ -312,6 +320,7 @@ class ADMServer:
                 f"pedido redistribuido: {id_pedido} {id_servidor} -> {novo_servidor}",
             )
 
+        await self._propagar_roteamento()
         return redistribuidos
 
     async def iniciar_eleicao(self) -> str:
@@ -513,6 +522,9 @@ class ADMServer:
         for id_adm in self._adms_ativos_com_id_menor_que(self.id_servidor):
             await self._enviar_novo_lider(id_adm, mensagem)
 
+        await self._sincronizar_roteamento_com_peers()
+        await self._propagar_roteamento()
+
         log_apresentacao(
             f"adm {self.id_servidor}",
             f"novo lider eleito: {self.id_servidor} "
@@ -545,6 +557,139 @@ class ADMServer:
         self.lider_disponivel = True
         self.aguardando_eleicao = False
         self.eleicao_em_andamento = False
+
+    def snapshot_roteamento(self) -> dict[str, str]:
+        """Return the current order-to-tracker map as string keys."""
+        return {str(id_pedido): servidor for id_pedido, servidor in self.mapa_pedido_servidor.items()}
+
+    def snapshot_pedidos(self) -> dict[str, dict]:
+        """Return active orders serialized for replication."""
+        return {str(id_pedido): to_message_dict(pedido) for id_pedido, pedido in self.pedidos.items()}
+
+    def snapshot_pedidos_sem_entregador(self) -> list[str]:
+        return [str(id_pedido) for id_pedido in self.pedidos_sem_entregador]
+
+    def _aplicar_roteamento_replicado(self, roteamento: dict[str, str]) -> None:
+        """Replace the local routing map with a leader snapshot."""
+        novo_mapa: dict[UUID, str] = {}
+        for id_pedido_str, servidor in roteamento.items():
+            try:
+                novo_mapa[UUID(id_pedido_str)] = servidor
+            except (TypeError, ValueError):
+                continue
+        self.mapa_pedido_servidor = novo_mapa
+
+    def _aplicar_pedidos_replicados(
+        self,
+        pedidos: dict[str, dict],
+        pedidos_sem_entregador: list[str],
+    ) -> None:
+        """Replace local order state with a leader snapshot."""
+        novo_pedidos: dict[UUID, Pedido] = {}
+        for id_pedido_str, dados in pedidos.items():
+            try:
+                id_pedido = UUID(id_pedido_str)
+                novo_pedidos[id_pedido] = Pedido.model_validate(dados)
+            except (TypeError, ValueError):
+                continue
+
+        self.pedidos = novo_pedidos
+        self.pedidos_sem_entregador = {
+            UUID(id_pedido_str): novo_pedidos[UUID(id_pedido_str)]
+            for id_pedido_str in pedidos_sem_entregador
+            if id_pedido_str in pedidos
+            and UUID(id_pedido_str) in novo_pedidos
+        }
+
+    async def processar_replicacao_roteamento(
+        self, mensagem: ReplicacaoRoteamento
+    ) -> None:
+        """Apply a state snapshot sent by the current ADM leader."""
+        if mensagem.idServidorOrigem != self.lider_atual:
+            return
+
+        self._aplicar_roteamento_replicado(mensagem.roteamento)
+        self._aplicar_pedidos_replicados(mensagem.pedidos, mensagem.pedidosSemEntregador)
+        log_apresentacao(
+            f"adm {self.id_servidor}",
+            f"estado replicado do lider: {len(mensagem.roteamento)} roteamento(s), "
+            f"{len(mensagem.pedidos)} pedido(s)",
+        )
+
+    async def _propagar_roteamento(self) -> None:
+        """Push routing map and orders from the leader to all ADM peers."""
+        if not self.sou_lider() or self.replication_sender is None:
+            return
+
+        mensagem = ReplicacaoRoteamento(
+            idServidorOrigem=self.id_servidor,
+            roteamento=self.snapshot_roteamento(),
+            pedidos=self.snapshot_pedidos(),
+            pedidosSemEntregador=self.snapshot_pedidos_sem_entregador(),
+            timestamp=int(time()),
+        )
+
+        for id_adm in self.servidores_adm:
+            if id_adm == self.id_servidor:
+                continue
+            await self.replication_sender(id_adm, mensagem)
+
+    async def _sincronizar_roteamento_com_peers(self) -> None:
+        """Merge routing maps and orders from peers when this ADM becomes leader."""
+        if self.state_fetcher is None:
+            return
+
+        mapa_merged = dict(self.mapa_pedido_servidor)
+        pedidos_merged = dict(self.pedidos)
+        sem_entregador_merged = dict(self.pedidos_sem_entregador)
+
+        for id_adm in sorted(self.servidores_adm_ativos):
+            if id_adm == self.id_servidor:
+                continue
+            try:
+                estado = await self.state_fetcher(id_adm)
+            except Exception:
+                continue
+
+            roteamento = estado.get("roteamento", {})
+            for id_pedido_str, servidor in roteamento.items():
+                try:
+                    id_pedido = UUID(id_pedido_str)
+                except (TypeError, ValueError):
+                    continue
+                if id_pedido not in mapa_merged:
+                    mapa_merged[id_pedido] = servidor
+
+            for id_pedido_str, dados in estado.get("pedidosDetalhe", {}).items():
+                try:
+                    id_pedido = UUID(id_pedido_str)
+                except (TypeError, ValueError):
+                    continue
+                if id_pedido not in pedidos_merged:
+                    pedidos_merged[id_pedido] = Pedido.model_validate(dados)
+
+            for id_pedido_str in estado.get("pedidosSemEntregador", []):
+                try:
+                    id_pedido = UUID(id_pedido_str)
+                except (TypeError, ValueError):
+                    continue
+                if id_pedido in pedidos_merged and id_pedido not in sem_entregador_merged:
+                    sem_entregador_merged[id_pedido] = pedidos_merged[id_pedido]
+
+        mudou = (
+            mapa_merged != self.mapa_pedido_servidor
+            or pedidos_merged != self.pedidos
+            or sem_entregador_merged != self.pedidos_sem_entregador
+        )
+        if mudou:
+            self.mapa_pedido_servidor = mapa_merged
+            self.pedidos = pedidos_merged
+            self.pedidos_sem_entregador = sem_entregador_merged
+            log_apresentacao(
+                f"adm {self.id_servidor}",
+                f"estado sincronizado dos peers: {len(mapa_merged)} roteamento(s), "
+                f"{len(pedidos_merged)} pedido(s)",
+            )
 
     async def _buscar_backup_sup(self, id_rastreador: str) -> dict:
         support = self.support_servers.get(id_rastreador)

@@ -8,10 +8,10 @@ Ultima validacao:
 
 ```text
 pytest -q
-94 passed
+99 passed
 
 # sem RabbitMQ (docker compose stop):
-# 91 passed, 3 skipped
+# 96 passed, 3 skipped
 
 pytest -q -m integration
 3 passed
@@ -45,6 +45,7 @@ pytest -q -m integration
 - [x] Implementar `KeepAlive`.
 - [x] Garantir `KeepAlive` com `idServidor`, `tipoServidor` e `timestamp`.
 - [x] Implementar `AtualizacaoRoteamento`.
+- [x] Implementar `ReplicacaoRoteamento` (snapshot ADM lider → peers).
 - [x] Implementar entidades `Cliente`, `Entregador`, `Restaurante` e `Pedido`.
 - [x] Implementar entidades `ServidorAdministrador`, `ServidorRastreador` e `ServidorSuporte`.
 
@@ -115,7 +116,10 @@ pytest -q -m integration
 - [x] Interpretar IDs como `adm-10` corretamente na escolha do maior ID.
 - [x] Simular multiplos ADMs em processos separados.
 - [x] Implementar troca real de mensagens de eleicao entre ADMs.
-- [ ] Replicar mapa pedido -> servidor rastreador entre ADMs.
+- [x] Replicar mapa pedido -> servidor rastreador entre ADMs.
+- [x] Replicar pedidos ativos entre ADMs (criar/aceitar/confirmar + sync na eleicao).
+- [x] Sincronizar estado ADM dos peers ao assumir lideranca.
+- [x] Tolerar peer ADM offline no transporte HTTP (keepalive/eleicao/replicacao).
 
 ## Servidor Rastreador R
 
@@ -174,6 +178,8 @@ pytest -q -m integration
 - [x] Testar heartbeat usando tempo local.
 - [x] Testar ordem estavel de heartbeats expirados.
 - [x] Testar broker real com RabbitMQ.
+- [x] Testar replicacao de roteamento e pedidos entre ADMs.
+- [x] Testar confirmar entrega no novo lider apos falha do lider ADM.
 - [ ] Testar cenario de falha com processos reais.
 
 ## Demonstracao Fim a Fim
@@ -202,6 +208,14 @@ pytest -q -m integration
 - [x] ADM solicitar backup ao SUP.
 - [x] ADM redistribuir pedido para R2.
 - [x] Mostrar rastreio continuando pelo novo servidor.
+
+## Demonstracao ADM (replicacao + eleicao)
+
+- [x] Criar script `demo_roteamento.ps1` (roteamento e pedidos nos 3 ADMs).
+- [x] `demo_estado.ps1` exibe campo `roteamento`.
+- [x] Demo manual: replicacao apos aceitar pedido (3 ADMs com mesmo mapa).
+- [x] Demo manual: eleicao apos matar lider com estado preservado no novo lider.
+- [ ] Demo manual: confirmar entrega no novo lider (validado em teste; repetir em processos reais).
 
 ## Logs de Apresentacao
 
@@ -232,4 +246,5 @@ Desabilitar logs: `PRESENTATION_LOG=0`.
 - [x] Testes atuais passando.
 - [x] Demo ADM com 3 processos e RabbitMQ real implementadas.
 - [x] Demo E2E completa (R1/R2, SUP, cliente e entregador via broker) e failover manual validados.
+- [x] Replicacao ADM (roteamento + pedidos) validada manualmente com eleicao de lider.
 - [x] Atualizar este checklist sempre que uma etapa nova for implementada.
