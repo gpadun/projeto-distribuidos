@@ -7,6 +7,8 @@ from src.core.models import (
     KeepAlive,
     LocalizacaoEntregador,
     Pedido,
+    PedidoPreparado,
+    PrepararPedido,
     StatusPedido,
     SubscribeRastreio,
     TipoServidor,
@@ -99,3 +101,21 @@ def test_resposta_eleicao_liga_origem_e_destino():
 def test_novo_lider_anuncia_servidor():
     msg = NovoLider(idServidor="adm-3", timestamp=1710000105)
     assert msg.idServidor == "adm-3"
+
+
+def test_preparar_pedido_e_pedido_preparado():
+    id_pedido = uuid4()
+
+    comando = PrepararPedido(
+        idPedido=id_pedido,
+        idRestaurante="restaurante-1",
+        timestamp=1710000200,
+    )
+    evento = PedidoPreparado(
+        idPedido=id_pedido,
+        idRestaurante="restaurante-1",
+        timestamp=1710000201,
+    )
+
+    assert comando.idPedido == id_pedido
+    assert evento.idRestaurante == "restaurante-1"

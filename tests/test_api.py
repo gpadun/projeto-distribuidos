@@ -22,6 +22,15 @@ def test_api_retorna_erro_limpo_para_pedido_inexistente():
     assert response.json()["detail"] == "pedido nao encontrado"
 
 
+def test_api_retorna_erro_limpo_quando_nao_ha_rastreador_ativo():
+    adm = ADMServer("adm-1", ["rastreador-1"], servidores_adm=["adm-1"])
+    adm.lider_atual = "adm-1"
+    response = run(_post_aceitar_sem_rastreador_ativo(adm))
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "nenhum servidor rastreador ativo"
+
+
 async def _post_aceitar_pedido_inexistente(adm: ADMServer):
     app = create_app(adm)
     transport = ASGITransport(app=app)
@@ -33,6 +42,31 @@ async def _post_aceitar_pedido_inexistente(adm: ADMServer):
                 "idPedido": "00000000-0000-0000-0000-000000000001",
                 "idEntregador": "entregador-1",
                 "timestamp": 1,
+            },
+        )
+
+
+async def _post_aceitar_sem_rastreador_ativo(adm: ADMServer):
+    app = create_app(adm)
+    transport = ASGITransport(app=app)
+    id_pedido = "00000000-0000-0000-0000-000000000002"
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.post(
+            "/pedidos",
+            json={
+                "idPedido": id_pedido,
+                "idCliente": "cliente-1",
+                "idRestaurante": "restaurante-1",
+                "timestamp": 1,
+            },
+        )
+        return await client.post(
+            "/pedidos/aceitar",
+            json={
+                "idPedido": id_pedido,
+                "idEntregador": "entregador-1",
+                "timestamp": 2,
             },
         )
 
@@ -135,6 +169,47 @@ def test_api_consultar_lider():
     }
 
 
+def test_demo_page_disponivel():
+    adm = ADMServer("adm-1", servidores_adm=["adm-1"])
+    app = create_app(adm)
+    transport = ASGITransport(app=app)
+
+    async def _get():
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.get("/demo")
+
+    response = run(_get())
+
+    assert response.status_code == 200
+    assert "Painel DSID" in response.text
+    assert "demo/cluster" in response.text
+    assert "Preparar restaurante" in response.text
+    assert "Fluxo Distribuido" in response.text
+    assert "Etapas do Pedido" in response.text
+    assert "Demo rápida" in response.text
+
+
+def test_demo_cluster_retorna_estado_local():
+    adm = ADMServer("adm-1", servidores_adm=["adm-1", "adm-2"])
+    adm.lider_atual = "adm-1"
+    app = create_app(adm)
+    transport = ASGITransport(app=app)
+
+    async def _get():
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.get("/demo/cluster")
+
+    response = run(_get())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["idServidor"] == "adm-1"
+    assert body["liderAtual"] == "adm-1"
+    assert body["estados"][0]["idServidor"] == "adm-1"
+    assert body["estados"][0]["online"] is True
+    assert body["estados"][1] == {"idServidor": "adm-2", "online": False}
+
+
 def test_api_recebe_keepalive():
     adm = ADMServer("adm-2", servidores_adm=["adm-1", "adm-2"])
     app = create_app(adm)
@@ -154,6 +229,39 @@ def test_api_recebe_keepalive():
     response = run(_post())
     assert response.status_code == 200
     assert "adm-1" in adm.servidores_adm_ativos
+
+
+def test_api_preparar_pedido():
+    adm = ADMServer("adm-1", servidores_adm=["adm-1"])
+    adm.lider_atual = "adm-1"
+    app = create_app(adm)
+    transport = ASGITransport(app=app)
+    id_pedido = str(uuid4())
+
+    async def _post():
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            await client.post(
+                "/pedidos",
+                json={
+                    "idPedido": id_pedido,
+                    "idCliente": "cliente-1",
+                    "idRestaurante": "restaurante-1",
+                    "timestamp": 1,
+                },
+            )
+            return await client.post(
+                "/pedidos/preparar",
+                json={
+                    "idPedido": id_pedido,
+                    "idRestaurante": "restaurante-1",
+                    "timestamp": 2,
+                },
+            )
+
+    response = run(_post())
+
+    assert response.status_code == 200
+    assert response.json()["restaurantePreparou"] is True
 
 
 def test_api_recebe_iniciar_eleicao():
@@ -219,3 +327,23 @@ def test_criar_adm_padrao_recebe_publisher_injetado():
     adm = _criar_adm_padrao(publisher)
 
     assert adm.publisher is publisher
+
+
+def test_criar_adm_padrao_usa_rastreadores_configurados(monkeypatch):
+    monkeypatch.setenv("ADM_ID", "adm-1")
+    monkeypatch.setenv("ADM_CLUSTER", "adm-1")
+    monkeypatch.setenv("ADM_TRACKERS", "rastreador-1, rastreador-2, rastreador-3")
+    monkeypatch.setenv(
+        "ADM_SUPPORT_URLS",
+        "rastreador-3:http://127.0.0.1:9103",
+    )
+    from src.api import _criar_adm_padrao
+
+    adm = _criar_adm_padrao(None)
+
+    assert adm.servidores_rastreadores == [
+        "rastreador-1",
+        "rastreador-2",
+        "rastreador-3",
+    ]
+    assert adm.support_urls["rastreador-3"] == "http://127.0.0.1:9103"

@@ -17,6 +17,8 @@ from src.core.models import (
     KeepAlive,
     Pedido,
     PedidoDisponivel,
+    PedidoPreparado,
+    PrepararPedido,
     StatusPedido,
     TipoServidor,
     IniciarEleicao,
@@ -33,6 +35,7 @@ from src.broker.topology import (
     EXCHANGE_PEDIDOS,
     ROUTING_PEDIDO_DISPONIVEL,
     routing_entrega_confirmada,
+    routing_pedido_preparado,
     routing_rastreador_atualizado,
     routing_roteamento,
 )
@@ -50,6 +53,18 @@ class NaoELiderError(Exception):
         )
 
 
+class ReplicacaoSemMaioriaError(Exception):
+    """Raised when the ADM leader cannot replicate state to a majority."""
+
+    def __init__(self, replicas_confirmadas: int, maioria: int):
+        self.replicas_confirmadas = replicas_confirmadas
+        self.maioria = maioria
+        super().__init__(
+            "nao foi possivel confirmar replicacao na maioria dos ADMs "
+            f"({replicas_confirmadas}/{maioria})"
+        )
+
+
 class ADMServer:
     """Coordinates orders, tracker routing, heartbeat state and leader election."""
 
@@ -64,7 +79,7 @@ class ADMServer:
         keepalive_sender: Callable[[str, KeepAlive], Awaitable[None]] | None = None,
         on_lider_caiu: Callable[[str], Awaitable[None]] | None = None,
         election_sender: Callable[[str, IniciarEleicao | RespostaEleicao | NovoLider], Awaitable[None]] | None = None,
-        replication_sender: Callable[[str, ReplicacaoRoteamento], Awaitable[None]] | None = None,
+        replication_sender: Callable[[str, ReplicacaoRoteamento], Awaitable[bool | None]] | None = None,
         state_fetcher: Callable[[str], Awaitable[dict]] | None = None,
         eleicao_timeout: float = 2.0,
         support_urls: dict[str, str] | None = None,
@@ -125,6 +140,33 @@ class ADMServer:
         log_apresentacao(
             f"adm {self.id_servidor}",
             f"pedido criado: {pedido.idPedido} cliente={pedido.idCliente}",
+        )
+        await self._propagar_roteamento()
+        return pedido
+
+    async def preparar_pedido(self, requisicao: PrepararPedido) -> Pedido:
+        """Mark an order as prepared by its restaurant and publish the event."""
+        self.garantir_lider()
+        pedido = self.pedidos.get(requisicao.idPedido)
+        if pedido is None:
+            raise KeyError("pedido nao encontrado")
+        if pedido.idRestaurante != requisicao.idRestaurante:
+            raise ValueError("restaurante nao corresponde ao pedido")
+
+        pedido.restaurantePreparou = True
+        evento = PedidoPreparado(
+            idPedido=requisicao.idPedido,
+            idRestaurante=requisicao.idRestaurante,
+            timestamp=requisicao.timestamp,
+        )
+        self._publish(
+            EXCHANGE_PEDIDOS,
+            routing_pedido_preparado(requisicao.idPedido),
+            evento,
+        )
+        log_apresentacao(
+            f"adm {self.id_servidor}",
+            f"pedido preparado: {pedido.idPedido} restaurante={pedido.idRestaurante}",
         )
         await self._propagar_roteamento()
         return pedido
@@ -193,6 +235,7 @@ class ADMServer:
                     f"adm {self.id_servidor}",
                     f"heartbeat recebido: {mensagem.idServidor} (rastreador ativo)",
                 )
+                await self._rebalancear_entrada_rastreador(mensagem.idServidor)
 
         elif (
             mensagem.tipoServidor == TipoServidor.ADM 
@@ -368,21 +411,60 @@ class ADMServer:
             raise RuntimeError("nenhum servidor rastreador ativo")
         return escolher_servidor_consistent_hash(id_pedido, ativos)
 
+    async def _rebalancear_entrada_rastreador(self, id_servidor: str) -> dict[UUID, str]:
+        """Move only orders affected by a newly active tracker entering the ring."""
+        if not self.sou_lider():
+            return {}
+
+        redistribuidos: dict[UUID, str] = {}
+        for id_pedido, servidor_atual in list(self.mapa_pedido_servidor.items()):
+            novo_servidor = self._escolher_servidor_rastreador(id_pedido)
+            if novo_servidor == servidor_atual:
+                continue
+
+            pedido = self.pedidos.get(id_pedido)
+            id_entregador = pedido.idEntregador if pedido else None
+            self.mapa_pedido_servidor[id_pedido] = novo_servidor
+            if pedido:
+                pedido.servidorRastreadorResponsavel = novo_servidor
+            redistribuidos[id_pedido] = novo_servidor
+
+            self._publish(
+                EXCHANGE_INFRA,
+                routing_roteamento(novo_servidor),
+                AtualizacaoRoteamento(
+                    idPedido=id_pedido,
+                    idServidorRastreador=novo_servidor,
+                    idEntregador=id_entregador,
+                    timestamp=int(time()),
+                ),
+            )
+            if id_entregador:
+                self._publish(
+                    EXCHANGE_PEDIDOS,
+                    routing_rastreador_atualizado(id_pedido),
+                    {
+                        "idPedido": str(id_pedido),
+                        "idServidorRastreador": novo_servidor,
+                        "idEntregador": id_entregador,
+                        "timestamp": int(time()),
+                    },
+                )
+            log_apresentacao(
+                f"adm {self.id_servidor}",
+                f"pedido rebalanceado por entrada de {id_servidor}: "
+                f"{id_pedido} {servidor_atual} -> {novo_servidor}",
+            )
+
+        if redistribuidos:
+            await self._propagar_roteamento()
+        return redistribuidos
+
     def _publish(self, exchange: str, routing_key: str, model) -> None:
         if self.publisher is not None:
             message = model if isinstance(model, dict) else to_message_dict(model)
             self.publisher.publish(exchange, routing_key, message)
 
-    @staticmethod
-    def _maior_id(ids: list[str]) -> str:
-        def chave(id_servidor: str) -> tuple[int, str]:
-            match = re.search(r"(\d+)$", id_servidor)
-            if match:
-                return (int(match.group(1)), id_servidor)
-            return (0, id_servidor)
-
-        return max(ids, key=chave)
-    
     @staticmethod
     def _chave_id(id_servidor: str) -> tuple[int, str]:
         match = re.search(r"(\d+)$", id_servidor)
@@ -593,13 +675,17 @@ class ADMServer:
             except (TypeError, ValueError):
                 continue
 
+        novo_sem_entregador: dict[UUID, Pedido] = {}
+        for id_pedido_str in pedidos_sem_entregador:
+            try:
+                id_pedido = UUID(id_pedido_str)
+            except (TypeError, ValueError):
+                continue
+            if id_pedido in novo_pedidos:
+                novo_sem_entregador[id_pedido] = novo_pedidos[id_pedido]
+
         self.pedidos = novo_pedidos
-        self.pedidos_sem_entregador = {
-            UUID(id_pedido_str): novo_pedidos[UUID(id_pedido_str)]
-            for id_pedido_str in pedidos_sem_entregador
-            if id_pedido_str in pedidos
-            and UUID(id_pedido_str) in novo_pedidos
-        }
+        self.pedidos_sem_entregador = novo_sem_entregador
 
     async def processar_replicacao_roteamento(
         self, mensagem: ReplicacaoRoteamento
@@ -616,6 +702,9 @@ class ADMServer:
             f"{len(mensagem.pedidos)} pedido(s)",
         )
 
+    def _maioria_adm(self) -> int:
+        return (len(self.servidores_adm) // 2) + 1
+
     async def _propagar_roteamento(self) -> None:
         """Push routing map and orders from the leader to all ADM peers."""
         if not self.sou_lider() or self.replication_sender is None:
@@ -629,10 +718,20 @@ class ADMServer:
             timestamp=int(time()),
         )
 
+        confirmadas = 1
         for id_adm in self.servidores_adm:
             if id_adm == self.id_servidor:
                 continue
-            await self.replication_sender(id_adm, mensagem)
+            try:
+                resultado = await self.replication_sender(id_adm, mensagem)
+            except Exception:
+                resultado = False
+            if resultado is not False:
+                confirmadas += 1
+
+        maioria = self._maioria_adm()
+        if confirmadas < maioria:
+            raise ReplicacaoSemMaioriaError(confirmadas, maioria)
 
     async def _sincronizar_roteamento_com_peers(self) -> None:
         """Merge routing maps and orders from peers when this ADM becomes leader."""

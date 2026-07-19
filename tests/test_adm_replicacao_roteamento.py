@@ -12,6 +12,7 @@ from src.core.models import (
     TipoServidor,
 )
 from src.servers.adm_server import ADMServer
+from src.servers.adm_server import ReplicacaoSemMaioriaError
 
 
 class ClusterRouter:
@@ -26,10 +27,11 @@ class ClusterRouter:
         self.mortos.add(id_adm)
         self.adms.pop(id_adm, None)
 
-    async def enviar_replicacao(self, id_destino: str, mensagem: ReplicacaoRoteamento) -> None:
+    async def enviar_replicacao(self, id_destino: str, mensagem: ReplicacaoRoteamento) -> bool:
         if id_destino in self.mortos:
-            return
+            return False
         await self.adms[id_destino].processar_replicacao_roteamento(mensagem)
+        return True
 
     async def consultar_estado(self, id_destino: str) -> dict:
         adm = self.adms[id_destino]
@@ -104,6 +106,100 @@ def test_lider_propaga_roteamento_ao_aceitar_pedido():
 
     assert adms["adm-1"].mapa_pedido_servidor[id_pedido] == pedido.servidorRastreadorResponsavel
     assert adms["adm-2"].mapa_pedido_servidor[id_pedido] == pedido.servidorRastreadorResponsavel
+
+
+def test_lider_exige_maioria_para_confirmar_replicacao():
+    router = ClusterRouter()
+    adms = criar_cluster(["adm-1", "adm-2", "adm-3"], router)
+    lider = adms["adm-3"]
+    lider.lider_atual = "adm-3"
+    router.marcar_morto("adm-1")
+    router.marcar_morto("adm-2")
+
+    try:
+        run(
+            lider.criar_pedido(
+                CriarPedido(
+                    idPedido=uuid4(),
+                    idCliente="cliente-1",
+                    idRestaurante="restaurante-1",
+                    timestamp=1,
+                )
+            )
+        )
+    except ReplicacaoSemMaioriaError as exc:
+        assert exc.replicas_confirmadas == 1
+        assert exc.maioria == 2
+    else:
+        raise AssertionError("replicacao sem maioria deveria falhar")
+
+
+def test_entrada_de_rastreador_rebalanceia_pedidos_afetados():
+    router = ClusterRouter()
+    adm = ADMServer(
+        id_servidor="adm-1",
+        servidores_adm=["adm-1"],
+        servidores_rastreadores=["rastreador-1", "rastreador-2", "rastreador-3"],
+        replication_sender=router.enviar_replicacao,
+    )
+    adm.lider_atual = "adm-1"
+
+    for id_rastreador in ("rastreador-1", "rastreador-2"):
+        run(
+            adm.processar_keepalive(
+                KeepAlive(
+                    idServidor=id_rastreador,
+                    tipoServidor=TipoServidor.RASTREADOR,
+                    timestamp=1,
+                )
+            )
+        )
+
+    id_pedido = uuid4()
+    for _ in range(1000):
+        antes = adm._escolher_servidor_rastreador(id_pedido)
+        adm.servidores_rastreadores_ativos.add("rastreador-3")
+        depois = adm._escolher_servidor_rastreador(id_pedido)
+        adm.servidores_rastreadores_ativos.discard("rastreador-3")
+        if depois == "rastreador-3" and antes != depois:
+            break
+        id_pedido = uuid4()
+    else:
+        raise AssertionError("nao encontrou pedido afetado pela entrada do R3")
+
+    run(
+        adm.criar_pedido(
+            CriarPedido(
+                idPedido=id_pedido,
+                idCliente="cliente-1",
+                idRestaurante="restaurante-1",
+                timestamp=1,
+            )
+        )
+    )
+    pedido = run(
+        adm.aceitar_pedido(
+            AceitarPedido(
+                idPedido=id_pedido,
+                idEntregador="entregador-1",
+                timestamp=2,
+            )
+        )
+    )
+    assert pedido.servidorRastreadorResponsavel == antes
+
+    run(
+        adm.processar_keepalive(
+            KeepAlive(
+                idServidor="rastreador-3",
+                tipoServidor=TipoServidor.RASTREADOR,
+                timestamp=3,
+            )
+        )
+    )
+
+    assert adm.mapa_pedido_servidor[id_pedido] == "rastreador-3"
+    assert adm.pedidos[id_pedido].servidorRastreadorResponsavel == "rastreador-3"
 
 
 def test_lider_propaga_remocao_ao_confirmar_entrega():
@@ -209,6 +305,35 @@ def test_replica_de_lider_antigo_e_ignorada():
     )
 
     assert adms["adm-1"].mapa_pedido_servidor == {}
+
+
+def test_replicacao_ignora_pedido_sem_entregador_invalido():
+    router = ClusterRouter()
+    adms = criar_cluster(["adm-1", "adm-2"], router)
+    follower = adms["adm-1"]
+    follower.lider_atual = "adm-2"
+    id_pedido = uuid4()
+
+    run(
+        follower.processar_replicacao_roteamento(
+            ReplicacaoRoteamento(
+                idServidorOrigem="adm-2",
+                roteamento={},
+                pedidos={
+                    str(id_pedido): {
+                        "idPedido": str(id_pedido),
+                        "idCliente": "cliente-1",
+                        "idRestaurante": "restaurante-1",
+                        "timestamp": 1,
+                    }
+                },
+                pedidosSemEntregador=["nao-e-uuid", str(id_pedido)],
+                timestamp=1,
+            )
+        )
+    )
+
+    assert set(follower.pedidos_sem_entregador) == {id_pedido}
 
 
 def test_novo_lider_confirma_entrega_apos_falha_do_lider():

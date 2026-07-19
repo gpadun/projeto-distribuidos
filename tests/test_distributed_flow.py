@@ -12,6 +12,7 @@ from src.core.models import (
     CriarPedido,
     KeepAlive,
     LocalizacaoEntregador,
+    PrepararPedido,
     TipoServidor,
     IniciarEleicao,
     RespostaEleicao,
@@ -149,6 +150,40 @@ def test_fluxo_criar_aceitar_rastrear_confirmar():
     assert "pedido.disponivel" in routing_keys
     assert f"pedido.{id_pedido}" in routing_keys
     assert f"pedido.{id_pedido}.entrega_confirmada" in routing_keys
+
+
+def test_adm_processa_restaurante_preparando_pedido():
+    publisher = RecordingPublisher()
+    adm = ADMServer("adm-1", ["rastreador-1"], publisher=publisher, servidores_adm=["adm-1"])
+    adm.lider_atual = "adm-1"
+    id_pedido = uuid4()
+
+    run(
+        adm.criar_pedido(
+            CriarPedido(
+                idPedido=id_pedido,
+                idCliente="cliente-1",
+                idRestaurante="restaurante-1",
+                timestamp=1,
+            )
+        )
+    )
+
+    pedido = run(
+        adm.preparar_pedido(
+            PrepararPedido(
+                idPedido=id_pedido,
+                idRestaurante="restaurante-1",
+                timestamp=2,
+            )
+        )
+    )
+
+    assert pedido.restaurantePreparou is True
+    assert any(
+        mensagem["routing_key"] == f"pedido.{id_pedido}.preparado"
+        for mensagem in publisher.messages
+    )
 
 
 def test_tracker_ignora_localizacao_antiga():

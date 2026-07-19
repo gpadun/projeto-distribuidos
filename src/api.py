@@ -5,6 +5,7 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 
 from src.broker.factory import criar_publisher, fechar_publisher
 from src.broker.publisher import Publisher
@@ -15,12 +16,14 @@ from src.core.models import (
     IniciarEleicao,
     KeepAlive,
     NovoLider,
+    PrepararPedido,
     ReplicacaoRoteamento,
     RespostaEleicao,
 )
 from src.infra.adm_transport import criar_adm_com_transporte_http
 from src.core.serialization import to_message_dict
-from src.servers.adm_server import ADMServer, NaoELiderError
+from src.demo_page import DEMO_HTML
+from src.servers.adm_server import ADMServer, NaoELiderError, ReplicacaoSemMaioriaError
 
 
 def parse_adm_peers(raw: str) -> dict[str, str]:
@@ -34,23 +37,37 @@ def parse_adm_peers(raw: str) -> dict[str, str]:
     return enderecos
 
 
+def parse_lista_csv(raw: str) -> list[str]:
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def parse_support_urls(raw: str) -> dict[str, str]:
+    urls = {}
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        id_rastreador, url = item.split(":", 1)
+        urls[id_rastreador.strip()] = url.strip()
+    return urls
+
+
 def _carregar_support_urls() -> dict[str, str]:
     mapping = {
         "rastreador-1": os.getenv("SUP_URL_RASTREADOR_1", ""),
         "rastreador-2": os.getenv("SUP_URL_RASTREADOR_2", ""),
     }
+    mapping.update(parse_support_urls(os.getenv("ADM_SUPPORT_URLS", "")))
     return {k: v for k, v in mapping.items() if v}
 
 
 def _criar_adm_padrao(publisher: Publisher | None) -> ADMServer:
     """Build the default ADM instance for this process."""
     id_servidor = os.getenv("ADM_ID", "adm-1")
-    servidores_adm = [
-        servidor.strip()
-        for servidor in os.getenv("ADM_CLUSTER", "adm-1,adm-2,adm-3").split(",")
-        if servidor.strip()
-    ]
-    servidores_rastreadores = ["rastreador-1", "rastreador-2"]
+    servidores_adm = parse_lista_csv(os.getenv("ADM_CLUSTER", "adm-1,adm-2,adm-3"))
+    servidores_rastreadores = parse_lista_csv(
+        os.getenv("ADM_TRACKERS", "rastreador-1,rastreador-2")
+    )
     peers_raw = os.getenv("ADM_PEERS", "")
     enderecos = parse_adm_peers(peers_raw) if peers_raw else {}
     support_urls = _carregar_support_urls()
@@ -134,12 +151,63 @@ def create_app(adm_server: ADMServer | None = None) -> FastAPI:
     else:
         app = FastAPI(title="Sistema Distribuido de Rastreamento")
 
+    def estado_adm() -> dict:
+        return {
+            "idServidor": adm.id_servidor,
+            "liderAtual": adm.lider_atual,
+            "souLider": adm.sou_lider(),
+            "pedidos": list(adm.pedidos.keys()),
+            "pedidosDetalhe": {
+                str(id_pedido): to_message_dict(pedido)
+                for id_pedido, pedido in adm.pedidos.items()
+            },
+            "pedidosSemEntregador": [str(id_pedido) for id_pedido in adm.pedidos_sem_entregador],
+            "roteamento": {str(k): v for k, v in adm.mapa_pedido_servidor.items()},
+            "rastreadoresAtivos": sorted(adm.servidores_rastreadores_ativos),
+            "rastreadoresComHeartbeatExpirado": adm.servidores_com_heartbeat_expirado(),
+            "admsAtivos": sorted(adm.servidores_adm_ativos),
+            "admsComHeartbeatExpirado": adm.adms_com_heartbeat_expirado(),
+            "liderDisponivel": adm.lider_disponivel,
+            "aguardandoEleicao": adm.aguardando_eleicao,
+            "idLiderAnterior": adm.id_lider_anterior,
+            "rabbitmqHabilitado": app_publisher is not None,
+            "online": True,
+        }
+
+    @app.get("/demo", response_class=HTMLResponse)
+    async def demo():
+        return DEMO_HTML
+
+    @app.get("/demo/cluster")
+    async def demo_cluster():
+        estados = [estado_adm()]
+        for id_adm in adm.servidores_adm:
+            if id_adm == adm.id_servidor:
+                continue
+            if adm.state_fetcher is None:
+                estados.append({"idServidor": id_adm, "online": False})
+                continue
+            try:
+                estado_peer = await adm.state_fetcher(id_adm)
+                estado_peer["online"] = True
+                estados.append(estado_peer)
+            except Exception:
+                estados.append({"idServidor": id_adm, "online": False})
+
+        return {
+            "idServidor": adm.id_servidor,
+            "liderAtual": adm.lider_atual,
+            "estados": sorted(estados, key=lambda item: item["idServidor"]),
+        }
+
     @app.post("/pedidos")
     async def criar_pedido(requisicao: CriarPedido):
         try:
             return await adm.criar_pedido(requisicao)
         except NaoELiderError as exc:
             raise _http_exception_nao_lider(exc) from exc
+        except ReplicacaoSemMaioriaError as exc:
+            raise HTTPException(status_code=503, detail=_exception_detail(exc)) from exc
 
     @app.post("/pedidos/aceitar")
     async def aceitar_pedido(requisicao: AceitarPedido):
@@ -149,6 +217,23 @@ def create_app(adm_server: ADMServer | None = None) -> FastAPI:
             raise _http_exception_nao_lider(exc) from exc
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=_exception_detail(exc)) from exc
+        except ReplicacaoSemMaioriaError as exc:
+            raise HTTPException(status_code=503, detail=_exception_detail(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=_exception_detail(exc)) from exc
+
+    @app.post("/pedidos/preparar")
+    async def preparar_pedido(requisicao: PrepararPedido):
+        try:
+            return await adm.preparar_pedido(requisicao)
+        except NaoELiderError as exc:
+            raise _http_exception_nao_lider(exc) from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=_exception_detail(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=_exception_detail(exc)) from exc
+        except ReplicacaoSemMaioriaError as exc:
+            raise HTTPException(status_code=503, detail=_exception_detail(exc)) from exc
 
     @app.post("/pedidos/confirmar")
     async def confirmar_entrega(requisicao: ConfirmarEntrega):
@@ -160,11 +245,16 @@ def create_app(adm_server: ADMServer | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=_exception_detail(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=_exception_detail(exc)) from exc
+        except ReplicacaoSemMaioriaError as exc:
+            raise HTTPException(status_code=503, detail=_exception_detail(exc)) from exc
 
     @app.post("/infra/keepalive")
     async def keepalive(mensagem: KeepAlive):
-        await adm.processar_keepalive(mensagem)
-        return {"ok": True}
+        try:
+            await adm.processar_keepalive(mensagem)
+            return {"ok": True}
+        except ReplicacaoSemMaioriaError as exc:
+            raise HTTPException(status_code=503, detail=_exception_detail(exc)) from exc
 
     @app.post("/infra/eleicao")
     async def eleicao():
@@ -201,26 +291,7 @@ def create_app(adm_server: ADMServer | None = None) -> FastAPI:
 
     @app.get("/estado")
     async def estado():
-        return {
-            "idServidor": adm.id_servidor,
-            "liderAtual": adm.lider_atual,
-            "souLider": adm.sou_lider(),
-            "pedidos": list(adm.pedidos.keys()),
-            "pedidosDetalhe": {
-                str(id_pedido): to_message_dict(pedido)
-                for id_pedido, pedido in adm.pedidos.items()
-            },
-            "pedidosSemEntregador": [str(id_pedido) for id_pedido in adm.pedidos_sem_entregador],
-            "roteamento": {str(k): v for k, v in adm.mapa_pedido_servidor.items()},
-            "rastreadoresAtivos": sorted(adm.servidores_rastreadores_ativos),
-            "rastreadoresComHeartbeatExpirado": adm.servidores_com_heartbeat_expirado(),
-            "admsAtivos": sorted(adm.servidores_adm_ativos),
-            "admsComHeartbeatExpirado": adm.adms_com_heartbeat_expirado(),
-            "liderDisponivel": adm.lider_disponivel,
-            "aguardandoEleicao": adm.aguardando_eleicao,
-            "idLiderAnterior": adm.id_lider_anterior,
-            "rabbitmqHabilitado": app_publisher is not None,
-        }
+        return estado_adm()
 
     return app
 
