@@ -56,15 +56,16 @@ class ADMHttpTransport:
         self,
         id_destino: str,
         mensagem: ReplicacaoRoteamento,
-    ) -> None:
+    ) -> bool:
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                await client.post(
+                response = await client.post(
                     self._url(id_destino, "/infra/replicar-roteamento"),
                     json=to_message_dict(mensagem),
                 )
+                return response.status_code < 400
         except httpx.HTTPError:
-            return
+            return False
 
     async def consultar_estado(self, id_destino: str) -> dict:
         async with httpx.AsyncClient(timeout=self.timeout) as client:

@@ -14,6 +14,8 @@ minimizando o impacto percebido quando componentes falham.
 - Arquitetura interna: camadas, com clientes simples de console ou web.
 - Restaurantes: pre-cadastrados/hardcoded para simplificar a prova de conceito.
 - Entregadores: simulados por scripts que enviam latitude, longitude e timestamp.
+- Restaurantes: simulados por processo que assina pedidos via broker e informa
+  preparo ao ADM.
 
 ## Comunicacao
 
@@ -28,6 +30,7 @@ Comandos:
 - `CriarPedido`: `idPedido`, `idCliente`, `idRestaurante`, `timestamp`.
 - `AceitarPedido`: `idPedido`, `idEntregador`, `timestamp`.
 - `ConfirmarEntrega`: `idPedido`, `idCliente`, `timestamp`.
+- `PrepararPedido`: `idPedido`, `idRestaurante`, `timestamp`.
 
 Eventos:
 
@@ -35,6 +38,7 @@ Eventos:
 - `LocalizacaoEntregador`: `idEntregador`, `idPedido`, `latitude`, `longitude`, `timestamp`.
 - `EventoLocalizacao`: `idPedido`, `latitude`, `longitude`, `timestamp`.
 - `SubscribeRastreio`: `idPedido`, `idServidorRastreador`.
+- `PedidoPreparado`: `idPedido`, `idRestaurante`, `timestamp`.
 
 Infraestrutura:
 
@@ -53,18 +57,23 @@ O PDF especifica consistent hashing com nos virtuais:
 ## Consistencia e Falhas
 
 - Modelo de consistencia eventual.
+- Prioridade AP do CAP: disponibilidade e tolerancia a particoes.
 - Atualizacoes de localizacao usam timestamp; a mais recente substitui as antigas.
 - Nao ha necessidade de exclusao mutua distribuida para localizacao.
 - Falhas sao detectadas por ausencia de `keepAlive`.
 - O ADM redistribui rastreios quando um servidor R falha.
 - O SUP mantem uma lista secundaria dos rastreios do servidor R associado.
 - A eleicao entre ADMs usa Bully Algorithm: o maior ID ativo torna-se lider.
+- A replicacao ADM e baseada em lider e exige maioria para confirmar mudancas.
+- A entrada ou saida de R atualiza o anel de consistent hashing e remapeia apenas
+  pedidos afetados.
 
 ## Componentes
 
 ADM:
 
 - acompanha disponibilidade dos servidores R;
+- registra preparo do pedido informado pelo restaurante;
 - mantem pedidos ainda sem entregador;
 - mantem relacao pedido -> servidor rastreador;
 - redistribui pedidos em falhas;

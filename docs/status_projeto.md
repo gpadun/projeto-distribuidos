@@ -8,16 +8,24 @@ Ultima validacao:
 
 ```text
 pytest -q
-99 passed
+113 passed
 
 # sem RabbitMQ (docker compose stop):
-# 96 passed, 3 skipped
+# 109 passed, 4 skipped
 
 pytest -q -m integration
-3 passed
+4 passed
 
 # sem RabbitMQ:
-# 3 skipped
+# 4 skipped
+
+# validacao manual sem RabbitMQ:
+# API ADM isolada: keepAlive -> criar -> aceitar -> confirmar OK
+# SUP HTTP: /estado e /backup OK
+
+# validacao manual com processos reais:
+# scripts/validate_cluster_manual.ps1
+# R3 entra por keepAlive real -> adm-3 falha -> adm-2 lider -> confirmar OK
 ```
 
 ## Documentacao
@@ -25,18 +33,25 @@ pytest -q -m integration
 - [x] Usar `Trabalho DSID Especificacoes.pdf` como fonte principal.
 - [x] Atualizar `docs/spec.md` para seguir o PDF.
 - [x] Atualizar `docs/especificacao.md` para seguir o PDF.
+- [x] Documentar CAP/AP, tipos de falha e recuperacao conforme o PDF.
+- [x] Documentar maioria na replicacao ADM conforme o PDF.
+- [x] Documentar rebalanceamento por entrada/saida de R conforme o PDF.
 - [x] Atualizar `README.md` com a arquitetura atual.
 - [x] Criar este checklist de acompanhamento.
 - [x] Adicionar no README um roteiro completo de apresentacao.
-- [ ] Adicionar no README comandos para rodar todos os componentes.
+- [x] Adicionar no README comandos para rodar todos os componentes.
 - [x] Adicionar no README como simular falha de servidor.
+- [x] Adicionar painel web simples em `/demo` para apresentacao.
+- [x] Adicionar visualizacao do fluxo distribuido no painel `/demo`.
 
 ## Contratos de Dados
 
 - [x] Implementar `CriarPedido`.
 - [x] Implementar `AceitarPedido`.
 - [x] Implementar `ConfirmarEntrega`.
+- [x] Implementar `PrepararPedido`.
 - [x] Implementar `PedidoDisponivel`.
+- [x] Implementar `PedidoPreparado`.
 - [x] Implementar `LocalizacaoEntregador`.
 - [x] Implementar `EventoLocalizacao`.
 - [x] Implementar `SubscribeRastreio`.
@@ -61,8 +76,9 @@ pytest -q -m integration
 - [x] Usar timestamp para aceitar apenas a localizacao mais recente.
 - [x] Ignorar localizacao antiga quando timestamp for menor.
 - [x] Rejeitar localizacao de pedido nao registrado no Rastreador.
-- [ ] Testar rebalanceamento com entrada de novo servidor R.
-- [ ] Testar rebalanceamento com saida de servidor R em processo real.
+- [x] Testar entrada de novo servidor R configurado por processo real.
+- [x] Rebalancear pedidos afetados quando novo servidor R entra no anel.
+- [x] Testar saida de servidor R em processo real por failover.
 
 ## Broker e Comunicacao Assincrona
 
@@ -90,15 +106,22 @@ pytest -q -m integration
 - [x] Criar endpoint para `KeepAlive`.
 - [x] Criar endpoint para eleicao.
 - [x] Criar endpoint para consultar estado.
+- [x] Criar endpoint `/demo/cluster` para o painel.
 - [x] Testar API com requests HTTP reais usando ASGI transport.
+- [x] Testar API manualmente via HTTP local sem RabbitMQ.
 - [x] Retornar mensagens de erro limpas em excecoes da API.
-- [ ] Adicionar exemplos de payload no README.
+- [x] Retornar erro limpo quando nao ha rastreador ativo para aceitar pedido.
+- [x] Permitir lista de rastreadores via `ADM_TRACKERS`.
+- [x] Permitir SUPs extras via `ADM_SUPPORT_URLS`.
+- [x] Adicionar exemplos de payload no README.
 
 ## Servidor ADM
 
 - [x] Manter lista de pedidos.
 - [x] Manter lista de pedidos sem entregador.
 - [x] Publicar `PedidoDisponivel`.
+- [x] Processar `PrepararPedido` enviado pelo restaurante.
+- [x] Publicar `PedidoPreparado`.
 - [x] Processar `AceitarPedido`.
 - [x] Escolher Servidor Rastreador por consistent hashing.
 - [x] Publicar `AtualizacaoRoteamento`.
@@ -118,6 +141,7 @@ pytest -q -m integration
 - [x] Implementar troca real de mensagens de eleicao entre ADMs.
 - [x] Replicar mapa pedido -> servidor rastreador entre ADMs.
 - [x] Replicar pedidos ativos entre ADMs (criar/aceitar/confirmar + sync na eleicao).
+- [x] Exigir confirmacao de maioria na replicacao lider -> ADMs.
 - [x] Sincronizar estado ADM dos peers ao assumir lideranca.
 - [x] Tolerar peer ADM offline no transporte HTTP (keepalive/eleicao/replicacao).
 
@@ -140,6 +164,7 @@ pytest -q -m integration
 - [x] Retornar lista de backup ao ADM.
 - [x] Guardar horario do ultimo sync.
 - [x] Rodar SUP como processo proprio.
+- [x] Testar SUP manualmente via HTTP local.
 - [x] Receber sincronizacao real do R via mensagem ou endpoint.
 - [x] Avisar/atender ADM em cenario real de falha.
 
@@ -148,6 +173,9 @@ pytest -q -m integration
 - [x] Criar `mock_customer.py`.
 - [x] Criar pedido pelo mock customer.
 - [x] Confirmar entrega pelo mock customer.
+- [x] Criar `mock_restaurant.py`.
+- [x] Fazer mock restaurant assinar `PedidoDisponivel` real via RabbitMQ.
+- [x] Fazer mock restaurant preparar pedido via ADM lider.
 - [x] Criar `mock_driver.py`.
 - [x] Gerar coordenadas falsas.
 - [x] Enviar localizacoes periodicas quando conectado a um Tracker injetado.
@@ -160,6 +188,7 @@ pytest -q -m integration
 - [x] Testar modelos principais.
 - [x] Testar campos do `SubscribeRastreio`.
 - [x] Testar campos do `KeepAlive`.
+- [x] Testar contratos de restaurante (`PrepararPedido` e `PedidoPreparado`).
 - [x] Testar roteamento deterministico legado.
 - [x] Testar consistent hashing.
 - [x] Testar fluxo criar -> aceitar -> rastrear -> confirmar.
@@ -169,6 +198,10 @@ pytest -q -m integration
 - [x] Testar escolha de lider com sufixo numerico em IDs como `adm-10`.
 - [x] Testar serializacao JSON-native.
 - [x] Testar endpoints FastAPI com `httpx`.
+- [x] Testar disponibilidade do painel `/demo`.
+- [x] Testar resumo `/demo/cluster`.
+- [x] Testar fluxo de restaurante preparando pedido.
+- [x] Testar cliente restaurante filtrando pedidos do proprio restaurante.
 - [x] Testar expirar rastreador sem heartbeat renovado.
 - [x] Testar backup de SUP com chave invalida.
 - [x] Testar cache do anel de consistent hashing.
@@ -179,8 +212,11 @@ pytest -q -m integration
 - [x] Testar ordem estavel de heartbeats expirados.
 - [x] Testar broker real com RabbitMQ.
 - [x] Testar replicacao de roteamento e pedidos entre ADMs.
+- [x] Testar falha quando replicacao ADM nao atinge maioria.
+- [x] Testar rebalanceamento de pedido afetado pela entrada de novo R.
 - [x] Testar confirmar entrega no novo lider apos falha do lider ADM.
-- [ ] Testar cenario de falha com processos reais.
+- [x] Testar cenario de falha com processos reais.
+- [x] Automatizar validacao multiprocesso real com `pytest -m integration`.
 
 ## Demonstracao Fim a Fim
 
@@ -189,8 +225,10 @@ pytest -q -m integration
 - [x] Criar script para subir R2.
 - [x] Criar script para subir SUP de R1.
 - [x] Criar script para cliente.
+- [x] Criar script para restaurante.
 - [x] Criar script para entregador.
 - [x] Cliente cria pedido.
+- [x] Restaurante recebe pedido e marca preparo.
 - [x] Entregador recebe pedido disponivel.
 - [x] Entregador aceita pedido.
 - [x] ADM atribui pedido a um R.
@@ -213,13 +251,18 @@ pytest -q -m integration
 
 - [x] Criar script `demo_roteamento.ps1` (roteamento e pedidos nos 3 ADMs).
 - [x] `demo_estado.ps1` exibe campo `roteamento`.
+- [x] Criar script `validate_cluster_manual.ps1`.
+- [x] Criar painel visual para observar ADMs, rastreadores, pedidos e roteamento.
+- [x] Mostrar etapas do pedido no painel: cliente, restaurante, entregador e rastreador.
 - [x] Demo manual: replicacao apos aceitar pedido (3 ADMs com mesmo mapa).
 - [x] Demo manual: eleicao apos matar lider com estado preservado no novo lider.
-- [ ] Demo manual: confirmar entrega no novo lider (validado em teste; repetir em processos reais).
+- [x] Demo manual: confirmar entrega no novo lider em processos reais.
+- [x] Demo multiprocesso coberta por teste de integracao automatizado.
 
 ## Logs de Apresentacao
 
 - [x] Logar pedido criado (`[adm]` + `[cliente]`).
+- [x] Logar pedido recebido/preparado pelo restaurante.
 - [x] Logar pedido aceito (`[adm]` + `[entregador]`).
 - [x] Logar servidor rastreador escolhido (`[adm]` na aceitacao + `[rastreador]` no roteamento).
 - [x] Logar localizacao recebida (`[rastreador]` + `[cliente]`).

@@ -26,6 +26,10 @@ A prova de conceito usa aplicacoes simples de console ou web. Os restaurantes
 sao pre-cadastrados e os entregadores sao simulados por scripts que enviam
 latitude, longitude e timestamp periodicamente.
 
+O restaurante tambem pode rodar como processo simples de demonstracao. Ele
+assina `PedidoDisponivel` no broker, filtra pedidos pelo seu `idRestaurante` e
+envia `PrepararPedido` ao ADM lider quando o pedido foi preparado.
+
 ## 4. Middleware
 
 O sistema usa Message Broker como middleware orientado a mensagens. Neste
@@ -57,6 +61,14 @@ Operacoes pontuais usam request/response:
   "idPedido": "uuid",
   "idCliente": "123",
   "timestamp": 1710000003
+}
+```
+
+```json
+{
+  "idPedido": "uuid",
+  "idRestaurante": "456",
+  "timestamp": 1710000002
 }
 ```
 
@@ -96,6 +108,14 @@ Eventos usam publish-subscribe:
 }
 ```
 
+```json
+{
+  "idPedido": "uuid",
+  "idRestaurante": "456",
+  "timestamp": 1710000002
+}
+```
+
 Mensagens internas:
 
 ```json
@@ -113,13 +133,16 @@ quais pedidos.
 
 1. Cliente envia `CriarPedido` ao servidor.
 2. Servidor publica `PedidoDisponivel`.
-3. Entregador assina pedidos disponiveis e envia `AceitarPedido`.
-4. Servidor associa pedido ao entregador e ao Servidor Rastreador.
-5. Cliente assina o rastreio com `SubscribeRastreio`.
-6. Entregador publica `LocalizacaoEntregador`.
-7. Rastreador publica/encaminha `EventoLocalizacao`.
-8. Cliente envia `ConfirmarEntrega`.
-9. Servidor publica `EntregaConfirmada`.
+3. Restaurante assina pedidos disponiveis, filtra seu restaurante e envia
+   `PrepararPedido`.
+4. Servidor publica `PedidoPreparado`.
+5. Entregador assina pedidos disponiveis e envia `AceitarPedido`.
+6. Servidor associa pedido ao entregador e ao Servidor Rastreador.
+7. Cliente assina o rastreio com `SubscribeRastreio`.
+8. Entregador publica `LocalizacaoEntregador`.
+9. Rastreador publica/encaminha `EventoLocalizacao`.
+10. Cliente envia `ConfirmarEntrega`.
+11. Servidor publica `EntregaConfirmada`.
 
 ## 7. Nomeacao e Roteamento
 
@@ -152,6 +175,32 @@ Quando um R falha, o ADM solicita a lista de backup ao SUP e redistribui os
 rastreios para servidores ativos. Se o backup nao chegar, o ADM pode usar sua
 propria lista.
 
+Os ADMs usam replicacao baseada em lider. Apenas o ADM lider altera a tabela de
+mapeamento pedido -> servidor rastreador. Depois de alterar seu estado local, o
+lider propaga o snapshot para os demais ADMs e considera a operacao confirmada
+somente quando a maioria do cluster reconhece a replicacao. Em um cluster de
+tres ADMs, isso significa o lider local mais pelo menos um ADM adicional.
+
+A distribuicao de copias se adapta a entrada e saida de servidores
+rastreadores. Quando um R entra no sistema e envia `keepAlive`, seus nos
+virtuais passam a fazer parte do anel; apenas os pedidos afetados pelo novo anel
+sao remapeados. Quando um R falha, seus nos virtuais sao removidos e apenas os
+pedidos sob responsabilidade dele sao redistribuidos.
+
+O projeto prioriza disponibilidade e tolerancia a particoes, aceitando
+inconsistencias temporarias durante falhas ou recuperacao. Mensagens antigas de
+localizacao sao descartadas por timestamp, e falhas parciais sao tratadas por
+timeouts, redirecionamento para o lider atual, redistribuicao de rastreios e
+eleicao de novo lider ADM.
+
+Falhas cobertas pela prova de conceito:
+
+- falha por crash de ADM lider;
+- falha por crash/omissao de Rastreador;
+- atraso de mensagens de localizacao;
+- resposta de comando enviada a ADM nao lider;
+- indisponibilidade temporaria de peer ADM durante replicacao.
+
 ## 10. Tarefas dos Servidores
 
 ADM:
@@ -159,6 +208,7 @@ ADM:
 - acompanhar disponibilidade dos servidores R;
 - solicitar informacoes de rastreios com apenas um R associado;
 - enviar informacoes obtidas para outro servidor R;
+- registrar preparo do pedido informado pelo restaurante;
 - manter pedidos sem entregador;
 - manter relacao entre rastreios e servidores rastreadores;
 - participar da eleicao de lider.

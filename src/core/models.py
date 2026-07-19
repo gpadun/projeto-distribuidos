@@ -47,6 +47,14 @@ class ConfirmarEntrega(BaseModel):
     timestamp: int
 
 
+class PrepararPedido(BaseModel):
+    """Synchronous command sent by a restaurant after receiving an order."""
+
+    idPedido: UUID
+    idRestaurante: str
+    timestamp: int
+
+
 class PedidoDisponivel(BaseModel):
     """Event published when an order still has no assigned driver."""
 
@@ -85,6 +93,14 @@ class EntregaConfirmada(BaseModel):
     """Event published after delivery confirmation."""
 
     idPedido: UUID
+    timestamp: int
+
+
+class PedidoPreparado(BaseModel):
+    """Event published when the restaurant prepares/accepts an order."""
+
+    idPedido: UUID
+    idRestaurante: str
     timestamp: int
 
 
@@ -178,6 +194,7 @@ class Pedido(BaseModel):
     status: StatusPedido = StatusPedido.RECEM_CRIADO
     idEntregador: str | None = None
     servidorRastreadorResponsavel: str | None = None
+    restaurantePreparou: bool = False
 
 
 class ServidorRastreador(BaseModel):

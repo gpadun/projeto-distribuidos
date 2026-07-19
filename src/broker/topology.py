@@ -10,11 +10,17 @@ EXCHANGE_LOCALIZACAO = "localizacao"
 ROUTING_PEDIDO_DISPONIVEL = "pedido.disponivel"
 ROUTING_ENTREGA_CONFIRMADA = "pedido.*.entrega_confirmada"
 ROUTING_RASTREADOR_ATUALIZADO = "pedido.*.rastreador_atualizado"
+ROUTING_PEDIDO_PREPARADO = "pedido.*.preparado"
 
 
 def routing_entrega_confirmada(id_pedido: UUID | str) -> str:
     """Routing key for EntregaConfirmada events."""
     return f"pedido.{id_pedido}.entrega_confirmada"
+
+
+def routing_pedido_preparado(id_pedido: UUID | str) -> str:
+    """Routing key for PedidoPreparado events."""
+    return f"pedido.{id_pedido}.preparado"
 
 
 def routing_roteamento(id_servidor_rastreador: str) -> str:
