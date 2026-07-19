@@ -87,17 +87,42 @@ Regras praticas para continuar o projeto:
 
 ## Como Rodar o Projeto
 
+### Pre-requisitos do ambiente
+
+Antes de executar o projeto, garanta que o ambiente tenha:
+
+- **Python 3.11 ou superior** disponivel no terminal como `python`;
+- **PowerShell** para executar os scripts da pasta `scripts/`;
+- **Docker Desktop** instalado, aberto e usando containers Linux;
+- **Docker Compose** disponivel pelo comando `docker compose`;
+- portas locais livres para a demo:
+  - `5672` e `15672` para RabbitMQ;
+  - `8001`, `8002` e `8003` para os ADMs;
+  - `9101` e `9102` para os servidores SUP.
+
+Verificacao rapida:
+
+```powershell
+python --version
+docker version
+docker compose version
+```
+
+Para a demo completa, o Docker precisa estar rodando antes de subir o
+RabbitMQ. Se `docker version` mostrar erro como `Docker Desktop is unable to
+start`, abra/reinicie o Docker Desktop e aguarde o engine ficar pronto.
+
 Crie o ambiente e instale as dependencias:
 
-```bash
+```powershell
 python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
+.\.venv\Scripts\activate
+python -m pip install -r requirements.txt
 ```
 
 Rode os testes:
 
-```bash
+```powershell
 pytest -q
 ```
 
@@ -107,7 +132,7 @@ Com RabbitMQ rodando (`docker compose up -d`), a suite completa deve passar com
 
 Suba a API:
 
-```bash
+```powershell
 python main.py
 ```
 
