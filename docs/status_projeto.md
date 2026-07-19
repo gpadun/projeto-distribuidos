@@ -138,6 +138,7 @@ pytest -q -m integration
 - [x] Retornar heartbeats expirados em ordem estavel.
 - [x] Redistribuir pedido apos falha de R.
 - [x] Consultar backup do SUP.
+- [x] Continuar failover de R usando mapa local quando SUP HTTP estiver offline.
 - [x] Ignorar chaves invalidas em backup do SUP durante failover.
 - [x] Implementar Bully Algorithm simplificado.
 - [x] Interpretar IDs como `adm-10` corretamente na escolha do maior ID.
@@ -213,6 +214,7 @@ pytest -q -m integration
 - [x] Testar cliente restaurante filtrando pedidos do proprio restaurante.
 - [x] Testar expirar rastreador sem heartbeat renovado.
 - [x] Testar backup de SUP com chave invalida.
+- [x] Testar failover de R quando SUP HTTP estiver indisponivel.
 - [x] Testar cache do anel de consistent hashing.
 - [x] Testar ack/nack do subscriber.
 - [x] Testar rejeicao de payload JSON nao-objeto no subscriber.
