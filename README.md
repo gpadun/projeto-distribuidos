@@ -87,17 +87,54 @@ Regras praticas para continuar o projeto:
 
 ## Como Rodar o Projeto
 
-Crie o ambiente e instale as dependencias:
+### Pre-requisitos
 
-```bash
+- Python 3.11+ instalado e disponivel no terminal como `python`;
+- Docker Desktop aberto e com o engine Linux rodando;
+- PowerShell aberto na raiz do projeto.
+
+Antes de subir a demo distribuida, confira se o Docker esta pronto:
+
+```powershell
+docker version
+docker compose ps
+```
+
+Se aparecer `Docker Desktop is unable to start`, abra o Docker Desktop e aguarde
+ate ele indicar que esta rodando. Sem isso, o RabbitMQ nao sobe e os servidores
+que usam broker encerram com erro de conexao em `127.0.0.1:5672`.
+
+### Ambiente Python
+
+Se a pasta `.venv` ainda nao existir, crie o ambiente e instale as dependencias:
+
+```powershell
 python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
+.\.venv\Scripts\activate
+python -m pip install -r requirements.txt
+```
+
+Se a pasta `.venv` ja existir, nao precisa recriar. Apenas ative e confira:
+
+```powershell
+.\.venv\Scripts\activate
+python -m pip check
+```
+
+Se `python -m venv .venv` for interrompido no meio, por exemplo com
+`KeyboardInterrupt`, o ambiente pode ficar incompleto. Nesse caso, remova a
+pasta `.venv` e crie novamente:
+
+```powershell
+Remove-Item -Recurse -Force .venv
+python -m venv .venv
+.\.venv\Scripts\activate
+python -m pip install -r requirements.txt
 ```
 
 Rode os testes:
 
-```bash
+```powershell
 pytest -q
 ```
 
@@ -107,7 +144,7 @@ Com RabbitMQ rodando (`docker compose up -d`), a suite completa deve passar com
 
 Suba a API:
 
-```bash
+```powershell
 python main.py
 ```
 
@@ -245,10 +282,16 @@ dependencias instaladas.
 
 ### Broker RabbitMQ
 
+O Docker Desktop precisa estar rodando antes destes comandos.
+
 ```powershell
 docker compose up -d
 docker compose ps
 ```
+
+O `docker compose ps` deve mostrar o container `dsid-rabbitmq` como `healthy`.
+Se a porta `5672` nao estiver acessivel, os ADMs, rastreadores, restaurante,
+cliente e entregador nao conseguem usar RabbitMQ.
 
 ### Cluster ADM
 
@@ -305,7 +348,7 @@ assincronos. Comandos de pedido continuam via HTTP/FastAPI; eventos como
 ### Subir o broker
 
 Requisito: [Docker Desktop](https://www.docker.com/products/docker-desktop/)
-instalado.
+instalado, aberto e com o engine Linux rodando.
 
 Na raiz do projeto:
 
@@ -315,6 +358,15 @@ docker compose ps
 ```
 
 O container `dsid-rabbitmq` deve ficar `healthy`.
+
+Problemas comuns:
+
+- `Docker Desktop is unable to start`: abra/reinicie o Docker Desktop e aguarde
+  o engine ficar pronto antes de repetir `docker compose up -d`;
+- `nao foi possivel conectar ao RabbitMQ em 127.0.0.1:5672`: o container ainda
+  nao esta rodando ou a porta `5672` nao esta aberta;
+- testes de integracao marcados com `@pytest.mark.integration` sao pulados
+  quando o RabbitMQ nao esta acessivel.
 
 ### Painel de administracao
 
