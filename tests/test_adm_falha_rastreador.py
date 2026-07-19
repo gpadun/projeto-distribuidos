@@ -242,3 +242,33 @@ def test_detectar_falha_usa_backup_do_sup_em_memoria():
     redistribuidos = run(adm.detectar_falha_servidor_rastreador("rastreador-1"))
 
     assert redistribuidos[id_pedido] == "rastreador-2"
+
+
+def test_detectar_falha_continua_quando_sup_http_indisponivel(monkeypatch):
+    id_pedido = uuid4()
+    adm = ADMServer(
+        "adm-1",
+        ["rastreador-1", "rastreador-2"],
+        support_urls={"rastreador-1": "http://127.0.0.1:9999"},
+    )
+    adm.lider_atual = "adm-1"
+    adm.mapa_pedido_servidor[id_pedido] = "rastreador-1"
+    adm.pedidos[id_pedido] = Pedido(
+        idPedido=id_pedido,
+        idCliente="cliente-1",
+        idRestaurante="restaurante-1",
+        timestamp=1,
+        idEntregador="entregador-1",
+        servidorRastreadorResponsavel="rastreador-1",
+    )
+    adm.servidores_rastreadores_ativos.update({"rastreador-1", "rastreador-2"})
+
+    async def fake_get(self, url):
+        raise httpx.ConnectError("SUP offline")
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+
+    redistribuidos = run(adm.detectar_falha_servidor_rastreador("rastreador-1"))
+
+    assert redistribuidos[id_pedido] == "rastreador-2"
+    assert adm.mapa_pedido_servidor[id_pedido] == "rastreador-2"

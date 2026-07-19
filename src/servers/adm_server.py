@@ -822,7 +822,14 @@ class ADMServer:
         if not url:
             return {}
 
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(f"{url.rstrip('/')}/backup")
-            response.raise_for_status()
-            return response.json()
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(f"{url.rstrip('/')}/backup")
+                response.raise_for_status()
+                return response.json()
+        except httpx.HTTPError as exc:
+            log_apresentacao(
+                f"adm {self.id_servidor}",
+                f"SUP indisponivel para {id_rastreador}; usando mapa local ({exc})",
+            )
+            return {}
