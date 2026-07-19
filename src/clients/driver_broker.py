@@ -52,6 +52,48 @@ def parse_pedido_disponivel(payload: dict) -> PedidoDisponivel:
     return PedidoDisponivel.model_validate(payload)
 
 
+def listar_pedidos_sem_entregador_via_adm(
+    adm_url: str,
+    timeout: float = 5.0,
+    adm_urls: list[str] | None = None,
+) -> list[UUID]:
+    """Return orders waiting for a driver according to the ADM leader state."""
+    urls_candidatas = adm_urls or carregar_adm_urls()
+    url_atual = resolver_adm_lider_url(adm_url=adm_url, adm_urls=urls_candidatas, timeout=timeout)
+
+    tentativas = [url_atual]
+    for url in urls_candidatas:
+        if url not in tentativas:
+            tentativas.append(url)
+
+    ultimo_erro: Exception | None = None
+    indice = 0
+    while indice < len(tentativas):
+        url = tentativas[indice]
+        indice += 1
+        endpoint = f"{url.rstrip('/')}/estado"
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                response = client.get(endpoint)
+        except httpx.HTTPError as exc:
+            ultimo_erro = DriverBrokerError(
+                f"falha ao consultar pedidos pendentes no ADM em {url}: {exc}"
+            )
+            continue
+
+        if response.status_code == 200:
+            body = response.json()
+            return [UUID(str(id_pedido)) for id_pedido in body.get("pedidosSemEntregador", [])]
+
+        ultimo_erro = DriverBrokerError(
+            f"falha ao consultar pedidos pendentes: HTTP {response.status_code} - {response.text}"
+        )
+
+    if ultimo_erro is None:
+        raise DriverBrokerError("nenhum ADM disponivel para consultar pedidos pendentes")
+    raise ultimo_erro
+
+
 def aceitar_pedido_via_adm(
     adm_url: str,
     id_entregador: str,
@@ -122,9 +164,133 @@ def parse_entrega_confirmada(payload: dict) -> EntregaConfirmada:
     return EntregaConfirmada.model_validate(payload)
 
 
-def criar_callback_entrega_confirmada(
+def _iniciar_gps_pedido(
+    id_entregador: str,
+    id_pedido: UUID,
+    id_rastreador: str,
+    broker_settings: BrokerSettings,
     parar_gps: dict[UUID, threading.Event],
     rastreador_por_pedido: dict[UUID, str],
+    intervalo_gps: float,
+) -> None:
+    parar = threading.Event()
+    parar_gps[id_pedido] = parar
+    rastreador_por_pedido[id_pedido] = id_rastreador
+    thread = threading.Thread(
+        target=_publicar_localizacoes_periodicas,
+        args=(
+            id_entregador,
+            id_pedido,
+            intervalo_gps,
+            broker_settings,
+            parar,
+            rastreador_por_pedido,
+        ),
+        daemon=True,
+    )
+    thread.start()
+
+
+def _aceitar_e_iniciar_entrega(
+    id_entregador: str,
+    adm_url: str,
+    id_pedido: UUID,
+    pedidos_aceitos: set[UUID],
+    broker_settings: BrokerSettings,
+    parar_gps: dict[UUID, threading.Event],
+    rastreador_por_pedido: dict[UUID, str],
+    intervalo_gps: float,
+) -> bool:
+    """Try to accept one order and start GPS. Returns True when delivery started."""
+    if id_pedido in pedidos_aceitos:
+        return False
+    if entregador_tem_entrega_ativa(parar_gps):
+        return False
+
+    try:
+        resultado = aceitar_pedido_via_adm(
+            adm_url,
+            id_entregador,
+            id_pedido,
+            adm_urls=carregar_adm_urls(),
+        )
+    except PedidoJaAceitoError:
+        return False
+    except DriverBrokerError as exc:
+        log_apresentacao("entregador", f"erro ao aceitar pedido: {exc}")
+        return False
+
+    pedidos_aceitos.add(id_pedido)
+    id_rastreador = resultado.get("servidorRastreadorResponsavel")
+    log_apresentacao(
+        "entregador",
+        f"pedido aceito: idPedido={resultado.get('idPedido')} rastreador={id_rastreador}",
+    )
+    if not id_rastreador:
+        return False
+
+    _iniciar_gps_pedido(
+        id_entregador,
+        id_pedido,
+        id_rastreador,
+        broker_settings,
+        parar_gps,
+        rastreador_por_pedido,
+        intervalo_gps,
+    )
+    return True
+
+
+def tentar_aceitar_pedidos_pendentes(
+    id_entregador: str,
+    adm_url: str,
+    aceitar_automatico: bool,
+    pedidos_aceitos: set[UUID],
+    broker_settings: BrokerSettings,
+    parar_gps: dict[UUID, threading.Event],
+    rastreador_por_pedido: dict[UUID, str],
+    intervalo_gps: float,
+) -> None:
+    """Pick up orders still waiting on ADM when this driver becomes idle."""
+    if not aceitar_automatico or entregador_tem_entrega_ativa(parar_gps):
+        return
+
+    try:
+        pendentes = listar_pedidos_sem_entregador_via_adm(
+            adm_url,
+            adm_urls=carregar_adm_urls(),
+        )
+    except DriverBrokerError as exc:
+        log_apresentacao("entregador", f"erro ao consultar fila de pedidos: {exc}")
+        return
+
+    for id_pedido in pendentes:
+        if _aceitar_e_iniciar_entrega(
+            id_entregador,
+            adm_url,
+            id_pedido,
+            pedidos_aceitos,
+            broker_settings,
+            parar_gps,
+            rastreador_por_pedido,
+            intervalo_gps,
+        ):
+            log_apresentacao(
+                "entregador",
+                f"pedido pendente assumido da fila: idPedido={id_pedido}",
+            )
+            return
+
+
+def criar_callback_entrega_confirmada(
+    id_entregador: str,
+    adm_url: str,
+    aceitar_automatico: bool,
+    pedidos_aceitos: set[UUID],
+    broker_settings: BrokerSettings,
+    parar_gps: dict[UUID, threading.Event],
+    rastreador_por_pedido: dict[UUID, str],
+    intervalo_gps: float,
 ):
     """Build the RabbitMQ callback that stops GPS publishing for one order."""
 
@@ -136,6 +302,16 @@ def criar_callback_entrega_confirmada(
         parar.set()
         rastreador_por_pedido.pop(evento.idPedido, None)
         log_apresentacao("entregador", f"entrega confirmada: idPedido={evento.idPedido}")
+        tentar_aceitar_pedidos_pendentes(
+            id_entregador,
+            adm_url,
+            aceitar_automatico,
+            pedidos_aceitos,
+            broker_settings,
+            parar_gps,
+            rastreador_por_pedido,
+            intervalo_gps,
+        )
 
     return callback
 
@@ -166,13 +342,13 @@ def criar_callback_pedido_disponivel(
     id_entregador: str,
     adm_url: str,
     aceitar_automatico: bool,
+    pedidos_aceitos: set[UUID],
     broker_settings: BrokerSettings,
     parar_gps: dict[UUID, threading.Event],
     rastreador_por_pedido: dict[UUID, str],
     intervalo_gps: float = 2.0,
 ):
     """Build the RabbitMQ callback for PedidoDisponivel events."""
-    pedidos_aceitos: set[UUID] = set()
 
     def callback(payload: dict) -> None:
         evento = parse_pedido_disponivel(payload)
@@ -187,57 +363,25 @@ def criar_callback_pedido_disponivel(
         if entregador_tem_entrega_ativa(parar_gps):
             log_apresentacao(
                 "entregador",
-                f"pedido ignorado (ocupado): idPedido={evento.idPedido}",
+                f"pedido em espera no ADM (ocupado): idPedido={evento.idPedido}",
             )
             return
 
-        if evento.idPedido in pedidos_aceitos:
-            return
-
-        try:
-            resultado = aceitar_pedido_via_adm(
-                adm_url,
-                id_entregador,
-                evento.idPedido,
-                adm_urls=carregar_adm_urls(),
-            )
-        except PedidoJaAceitoError:
+        aceito = _aceitar_e_iniciar_entrega(
+            id_entregador,
+            adm_url,
+            evento.idPedido,
+            pedidos_aceitos,
+            broker_settings,
+            parar_gps,
+            rastreador_por_pedido,
+            intervalo_gps,
+        )
+        if not aceito and evento.idPedido not in pedidos_aceitos:
             log_apresentacao(
                 "entregador",
                 f"pedido ja aceito por outro: idPedido={evento.idPedido}",
             )
-            return
-        except DriverBrokerError as exc:
-            log_apresentacao("entregador", f"erro ao aceitar pedido: {exc}")
-            return
-
-        pedidos_aceitos.add(evento.idPedido)
-        id_rastreador = resultado.get("servidorRastreadorResponsavel")
-        log_apresentacao(
-            "entregador",
-            f"pedido aceito: idPedido={resultado.get('idPedido')} rastreador={id_rastreador}",
-        )
-
-        if not id_rastreador:
-            return
-
-        parar = threading.Event()
-        parar_gps[evento.idPedido] = parar
-        rastreador_por_pedido[evento.idPedido] = id_rastreador
-
-        thread = threading.Thread(
-            target=_publicar_localizacoes_periodicas,
-            args=(
-                id_entregador,
-                evento.idPedido,
-                intervalo_gps,
-                broker_settings,
-                parar,
-                rastreador_por_pedido,
-            ),
-            daemon=True,
-        )
-        thread.start()
 
     return callback
 
@@ -263,11 +407,13 @@ def executar_entregador_broker(
 
     parar_gps: dict[UUID, threading.Event] = {}
     rastreador_por_pedido: dict[UUID, str] = {}
+    pedidos_aceitos: set[UUID] = set()
 
     callback = criar_callback_pedido_disponivel(
         id_entregador=id_entregador,
         adm_url=adm_url,
         aceitar_automatico=aceitar_automatico,
+        pedidos_aceitos=pedidos_aceitos,
         broker_settings=settings,
         parar_gps=parar_gps,
         rastreador_por_pedido=rastreador_por_pedido,
@@ -278,7 +424,16 @@ def executar_entregador_broker(
     subscriber.subscribe(
         EXCHANGE_PEDIDOS,
         ROUTING_ENTREGA_CONFIRMADA,
-        criar_callback_entrega_confirmada(parar_gps, rastreador_por_pedido),
+        criar_callback_entrega_confirmada(
+            id_entregador,
+            adm_url,
+            aceitar_automatico,
+            pedidos_aceitos,
+            settings,
+            parar_gps,
+            rastreador_por_pedido,
+            intervalo_gps,
+        ),
     )
     subscriber.subscribe(
         EXCHANGE_PEDIDOS,
@@ -291,6 +446,22 @@ def executar_entregador_broker(
         f"{EXCHANGE_PEDIDOS}/{ROUTING_RASTREADOR_ATUALIZADO} "
         f"como {id_entregador}; ADM={adm_url}"
     )
+
+    if aceitar_automatico:
+        threading.Thread(
+            target=tentar_aceitar_pedidos_pendentes,
+            args=(
+                id_entregador,
+                adm_url,
+                aceitar_automatico,
+                pedidos_aceitos,
+                settings,
+                parar_gps,
+                rastreador_por_pedido,
+                intervalo_gps,
+            ),
+            daemon=True,
+        ).start()
 
     try:
         subscriber.start_consuming()

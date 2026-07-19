@@ -131,6 +131,10 @@ def executar_assinatura_rastreio(
         "cliente",
         f"assinando {EXCHANGE_RASTREIO}/{routing_key} para pedido {id_pedido}",
     )
+    log_apresentacao(
+        f"cliente {id_cliente}",
+        f"aguardando entregador (pedido pode ficar na fila se todos estiverem ocupados)",
+    )
 
     try:
         subscriber.start_consuming()
