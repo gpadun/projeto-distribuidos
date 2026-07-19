@@ -285,7 +285,9 @@ Desabilitar logs: `PRESENTATION_LOG=0`.
 
 ## Observacoes
 
-- [x] Projeto correto como prova de conceito em memoria seguindo o PDF.
+- [x] Projeto correto como prova de conceito em memoria seguindo o PDF, com
+  replicacao entre ADMs e backup nos SUPs durante a execucao, mas sem
+  persistencia duravel se todos os processos forem reiniciados simultaneamente.
 - [x] Testes atuais passando.
 - [x] Demo ADM com 3 processos e RabbitMQ real implementadas.
 - [x] Demo E2E completa (R1/R2, SUP, cliente e entregador via broker) e failover manual validados.

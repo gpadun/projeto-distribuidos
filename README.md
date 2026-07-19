@@ -522,5 +522,8 @@ Logs podem ser silenciados com `PRESENTATION_LOG=0`.
 
 ## Limites da prova de conceito
 
-- O estado dos servidores fica em memoria; reiniciar todos os processos ao
-  mesmo tempo zera pedidos e rastreios.
+- O estado operacional e mantido em memoria durante a execucao, com replicacao
+  entre ADMs e backup nos SUPs para tolerar falhas de processos individuais. A
+  prova de conceito nao implementa persistencia duravel em banco de dados;
+  portanto, reiniciar todos os processos simultaneamente zera pedidos, rastreios
+  e mapas de roteamento.
