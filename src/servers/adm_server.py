@@ -306,7 +306,7 @@ class ADMServer:
         afetados = [
             id_pedido
             for id_pedido, servidor in self.mapa_pedido_servidor.items()
-            if servidor == id_servidor
+            if servidor == id_servidor and id_pedido in self.pedidos
         ]
         afetados_set = set(afetados)
         for id_pedido_str in backup:
@@ -314,12 +314,16 @@ class ADMServer:
                 pedido_uuid = UUID(id_pedido_str)
             except (TypeError, ValueError):
                 continue
+            if pedido_uuid not in self.pedidos:
+                continue
             if pedido_uuid not in afetados_set:
                 afetados.append(pedido_uuid)
                 afetados_set.add(pedido_uuid)
 
         redistribuidos: dict[UUID, str] = {}
         for id_pedido in afetados:
+            if id_pedido not in self.pedidos:
+                continue
             if not self.servidores_rastreadores_ativos:
                 break
 

@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import httpx
 
-from src.core.models import AceitarPedido, CriarPedido, KeepAlive, TipoServidor
+from src.core.models import AceitarPedido, CriarPedido, KeepAlive, Pedido, TipoServidor
 from src.servers.adm_server import ADMServer
 from src.servers.support_server import SupportServer
 
@@ -177,6 +177,39 @@ def test_buscar_backup_sup_via_http(monkeypatch):
     assert backup == backup_esperado
 
 
+def test_nao_redistribui_pedido_confirmado_presente_no_backup():
+    support = SupportServer("sup-1", "rastreador-1")
+    id_confirmado = uuid4()
+    id_ativo = uuid4()
+    support.rastreios = {
+        str(id_confirmado): {"idEntregador": "entregador-1"},
+        str(id_ativo): {"idEntregador": "entregador-1"},
+    }
+
+    publisher = RecordingPublisher()
+    adm = ADMServer(
+        "adm-1",
+        ["rastreador-1", "rastreador-2"],
+        publisher=publisher,
+        support_servers={"rastreador-1": support},
+    )
+    adm.mapa_pedido_servidor[id_ativo] = "rastreador-1"
+    adm.pedidos[id_ativo] = Pedido(
+        idPedido=id_ativo,
+        idCliente="cliente-1",
+        idRestaurante="restaurante-1",
+        timestamp=1,
+        idEntregador="entregador-1",
+        servidorRastreadorResponsavel="rastreador-1",
+    )
+    adm.servidores_rastreadores_ativos.update({"rastreador-1", "rastreador-2"})
+
+    redistribuidos = run(adm.detectar_falha_servidor_rastreador("rastreador-1"))
+
+    assert list(redistribuidos.keys()) == [id_ativo]
+    assert id_confirmado not in adm.mapa_pedido_servidor
+
+
 def test_detectar_falha_usa_backup_do_sup_em_memoria():
     support = SupportServer("sup-1", "rastreador-1")
     id_pedido = uuid4()
@@ -196,6 +229,14 @@ def test_detectar_falha_usa_backup_do_sup_em_memoria():
         support_servers={"rastreador-1": support},
     )
     adm.mapa_pedido_servidor[id_pedido] = "rastreador-1"
+    adm.pedidos[id_pedido] = Pedido(
+        idPedido=id_pedido,
+        idCliente="cliente-1",
+        idRestaurante="restaurante-1",
+        timestamp=1,
+        idEntregador="entregador-1",
+        servidorRastreadorResponsavel="rastreador-1",
+    )
     adm.servidores_rastreadores_ativos.update({"rastreador-1", "rastreador-2"})
 
     redistribuidos = run(adm.detectar_falha_servidor_rastreador("rastreador-1"))

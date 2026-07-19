@@ -63,6 +63,14 @@ def test_aceitar_pedido_via_adm_sucesso(monkeypatch):
             return FakeResponse()
 
     monkeypatch.setattr(httpx, "Client", FakeClient)
+    monkeypatch.setattr(
+        "src.clients.driver_broker.resolver_adm_lider_url",
+        lambda **kwargs: "http://127.0.0.1:8003",
+    )
+    monkeypatch.setattr(
+        "src.clients.driver_broker.carregar_adm_urls",
+        lambda: ["http://127.0.0.1:8003"],
+    )
 
     resultado = aceitar_pedido_via_adm(
         "http://127.0.0.1:8003",
@@ -98,6 +106,14 @@ def test_aceitar_pedido_via_adm_retorna_erro_quando_nao_e_lider(monkeypatch):
             return FakeResponse()
 
     monkeypatch.setattr(httpx, "Client", FakeClient)
+    monkeypatch.setattr(
+        "src.clients.driver_broker.resolver_adm_lider_url",
+        lambda **kwargs: "http://127.0.0.1:8001",
+    )
+    monkeypatch.setattr(
+        "src.clients.driver_broker.carregar_adm_urls",
+        lambda: ["http://127.0.0.1:8001"],
+    )
 
     with pytest.raises(DriverBrokerError, match="nao e o lider"):
         aceitar_pedido_via_adm(
@@ -107,6 +123,60 @@ def test_aceitar_pedido_via_adm_retorna_erro_quando_nao_e_lider(monkeypatch):
         )
 
 
+def test_aceitar_pedido_via_adm_tenta_outro_adm_quando_lider_caiu(monkeypatch):
+    id_pedido = uuid4()
+    chamadas = []
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {
+                "idPedido": str(id_pedido),
+                "servidorRastreadorResponsavel": "rastreador-2",
+            }
+
+    class FakeClient:
+        def __init__(self, timeout):
+            del timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, url, json):
+            chamadas.append(url)
+            if ":8003" in url:
+                raise httpx.ConnectError("adm-3 offline")
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    monkeypatch.setattr(
+        "src.clients.driver_broker.resolver_adm_lider_url",
+        lambda **kwargs: "http://127.0.0.1:8003",
+    )
+    monkeypatch.setattr(
+        "src.clients.driver_broker.carregar_adm_urls",
+        lambda: [
+            "http://127.0.0.1:8001",
+            "http://127.0.0.1:8002",
+            "http://127.0.0.1:8003",
+        ],
+    )
+
+    resultado = aceitar_pedido_via_adm(
+        "http://127.0.0.1:8003",
+        "entregador-1",
+        id_pedido,
+    )
+
+    assert resultado["servidorRastreadorResponsavel"] == "rastreador-2"
+    assert any(":8002" in url or ":8001" in url for url in chamadas)
+
+
 def test_callback_imprime_e_aceita_pedido(monkeypatch, capsys):
     id_pedido = uuid4()
     aceitos = []
@@ -114,7 +184,7 @@ def test_callback_imprime_e_aceita_pedido(monkeypatch, capsys):
 
     monkeypatch.setattr(
         "src.clients.driver_broker.aceitar_pedido_via_adm",
-        lambda adm_url, id_entregador, pedido_id: aceitos.append(
+        lambda adm_url, id_entregador, pedido_id, **kwargs: aceitos.append(
             (adm_url, id_entregador, pedido_id)
         )
         or {"idPedido": str(pedido_id), "servidorRastreadorResponsavel": "rastreador-2"},
@@ -157,8 +227,9 @@ def test_callback_imprime_e_aceita_pedido(monkeypatch, capsys):
 def test_callback_rastreador_atualizado():
     id_pedido = uuid4()
     rastreador_por_pedido = {id_pedido: "rastreador-1"}
+    parar_gps = {id_pedido: threading.Event()}
 
-    callback = criar_callback_rastreador_atualizado(rastreador_por_pedido)
+    callback = criar_callback_rastreador_atualizado(rastreador_por_pedido, parar_gps)
     callback(
         {
             "idPedido": str(id_pedido),
@@ -169,6 +240,26 @@ def test_callback_rastreador_atualizado():
     )
 
     assert rastreador_por_pedido[id_pedido] == "rastreador-2"
+
+
+def test_callback_rastreador_atualizado_ignora_pedido_confirmado():
+    id_pedido = uuid4()
+    rastreador_por_pedido = {}
+    parar = threading.Event()
+    parar.set()
+    parar_gps = {id_pedido: parar}
+
+    callback = criar_callback_rastreador_atualizado(rastreador_por_pedido, parar_gps)
+    callback(
+        {
+            "idPedido": str(id_pedido),
+            "idServidorRastreador": "rastreador-2",
+            "idEntregador": "entregador-1",
+            "timestamp": 1,
+        }
+    )
+
+    assert rastreador_por_pedido == {}
 
 
 def test_publicar_localizacoes_usa_rastreador_atualizado(monkeypatch):
@@ -216,11 +307,13 @@ def test_publicar_localizacoes_usa_rastreador_atualizado(monkeypatch):
 def test_callback_entrega_confirmada_para_gps():
     id_pedido = uuid4()
     parar_gps = {id_pedido: threading.Event()}
+    rastreador_por_pedido = {id_pedido: "rastreador-1"}
 
-    callback = criar_callback_entrega_confirmada(parar_gps)
+    callback = criar_callback_entrega_confirmada(parar_gps, rastreador_por_pedido)
     callback({"idPedido": str(id_pedido), "timestamp": 1})
 
     assert parar_gps[id_pedido].is_set()
+    assert id_pedido not in rastreador_por_pedido
 
 
 def test_publicar_localizacoes_para_quando_entrega_confirmada(monkeypatch):

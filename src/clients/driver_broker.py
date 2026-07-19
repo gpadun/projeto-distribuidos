@@ -30,6 +30,7 @@ from src.core.models import (
     PedidoDisponivel,
 )
 from src.core.serialization import to_message_dict
+from src.infra.adm_lider import carregar_adm_urls, resolver_adm_lider_url, url_do_adm
 from src.presentation_log import log_apresentacao
 
 
@@ -47,32 +48,60 @@ def aceitar_pedido_via_adm(
     id_entregador: str,
     id_pedido: UUID,
     timeout: float = 5.0,
+    adm_urls: list[str] | None = None,
 ) -> dict:
-    """Send AceitarPedido to Adm leader over HTTP."""
+    """Send AceitarPedido to the ADM leader, rediscovering it when needed."""
+    urls_candidatas = adm_urls or carregar_adm_urls()
+    url_atual = resolver_adm_lider_url(adm_url=adm_url, adm_urls=urls_candidatas, timeout=timeout)
+
     requisicao = AceitarPedido(
         idPedido=id_pedido,
         idEntregador=id_entregador,
         timestamp=int(time.time()),
     )
-    url = f"{adm_url.rstrip('/')}/pedidos/aceitar"
+    payload = to_message_dict(requisicao)
 
-    with httpx.Client(timeout=timeout) as client:
-        response = client.post(url, json=to_message_dict(requisicao))
+    tentativas = [url_atual]
+    for url in urls_candidatas:
+        if url not in tentativas:
+            tentativas.append(url)
 
-    if response.status_code == 200:
-        return response.json()
-    
-    if response.status_code == 409:
-        detail = response.json().get("detail", {})
-        lider = detail.get("liderAtual", "?")
-        raise DriverBrokerError(
-            f"ADM em {adm_url} nao e o lider; lider atual: {lider}. "
-            "Use a URL do lider em --adm-url."
+    ultimo_erro: Exception | None = None
+    indice = 0
+    while indice < len(tentativas):
+        url = tentativas[indice]
+        indice += 1
+        endpoint = f"{url.rstrip('/')}/pedidos/aceitar"
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                response = client.post(endpoint, json=payload)
+        except httpx.HTTPError as exc:
+            ultimo_erro = DriverBrokerError(
+                f"falha ao contactar ADM em {url}: {exc}"
+            )
+            continue
+
+        if response.status_code == 200:
+            return response.json()
+
+        if response.status_code == 409:
+            detail = response.json().get("detail", {})
+            id_lider = detail.get("liderAtual")
+            url_lider = url_do_adm(id_lider, urls_candidatas) if id_lider else None
+            if url_lider and url_lider not in tentativas:
+                tentativas.append(url_lider)
+            ultimo_erro = DriverBrokerError(
+                f"ADM em {url} nao e o lider; lider atual: {id_lider or '?'}"
+            )
+            continue
+
+        ultimo_erro = DriverBrokerError(
+            f"falha ao aceitar pedido: HTTP {response.status_code} - {response.text}"
         )
-    
-    raise DriverBrokerError(
-        f"falha ao aceitar pedido: HTTP {response.status_code} - {response.text}"
-    )
+
+    if ultimo_erro is None:
+        raise DriverBrokerError("nenhum ADM disponivel para aceitar o pedido")
+    raise ultimo_erro
 
 
 def parse_entrega_confirmada(payload: dict) -> EntregaConfirmada:
@@ -82,6 +111,7 @@ def parse_entrega_confirmada(payload: dict) -> EntregaConfirmada:
 
 def criar_callback_entrega_confirmada(
     parar_gps: dict[UUID, threading.Event],
+    rastreador_por_pedido: dict[UUID, str],
 ):
     """Build the RabbitMQ callback that stops GPS publishing for one order."""
 
@@ -91,6 +121,7 @@ def criar_callback_entrega_confirmada(
         if parar is None:
             return
         parar.set()
+        rastreador_por_pedido.pop(evento.idPedido, None)
         log_apresentacao("entregador", f"entrega confirmada: idPedido={evento.idPedido}")
 
     return callback
@@ -98,11 +129,16 @@ def criar_callback_entrega_confirmada(
 
 def criar_callback_rastreador_atualizado(
     rastreador_por_pedido: dict[UUID, str],
+    parar_gps: dict[UUID, threading.Event],
 ):
     """Build the RabbitMQ callback that updates GPS routing after ADM failover."""
 
     def callback(payload: dict) -> None:
         id_pedido = UUID(str(payload["idPedido"]))
+        parar = parar_gps.get(id_pedido)
+        if parar is None or parar.is_set():
+            return
+
         novo_rastreador = payload["idServidorRastreador"]
         rastreador_por_pedido[id_pedido] = novo_rastreador
         log_apresentacao(
@@ -137,8 +173,18 @@ def criar_callback_pedido_disponivel(
         
         if evento.idPedido in pedidos_aceitos:
             return
-        
-        resultado = aceitar_pedido_via_adm(adm_url, id_entregador, evento.idPedido)
+
+        try:
+            resultado = aceitar_pedido_via_adm(
+                adm_url,
+                id_entregador,
+                evento.idPedido,
+                adm_urls=carregar_adm_urls(),
+            )
+        except DriverBrokerError as exc:
+            log_apresentacao("entregador", f"erro ao aceitar pedido: {exc}")
+            return
+
         pedidos_aceitos.add(evento.idPedido)
         id_rastreador = resultado.get("servidorRastreadorResponsavel")
         log_apresentacao(
@@ -206,12 +252,12 @@ def executar_entregador_broker(
     subscriber.subscribe(
         EXCHANGE_PEDIDOS,
         ROUTING_ENTREGA_CONFIRMADA,
-        criar_callback_entrega_confirmada(parar_gps),
+        criar_callback_entrega_confirmada(parar_gps, rastreador_por_pedido),
     )
     subscriber.subscribe(
         EXCHANGE_PEDIDOS,
         ROUTING_RASTREADOR_ATUALIZADO,
-        criar_callback_rastreador_atualizado(rastreador_por_pedido),
+        criar_callback_rastreador_atualizado(rastreador_por_pedido, parar_gps),
     )
     print(
         f"[entregador] ouvindo {EXCHANGE_PEDIDOS}/{ROUTING_PEDIDO_DISPONIVEL}, "

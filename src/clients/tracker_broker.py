@@ -160,6 +160,8 @@ def _enviar_keepalive_periodico(
     adm_urls: list[str],
     intervalo: float,
 ) -> None:
+    urls_offline: set[str] = set()
+
     while True:
         mensagem = KeepAlive(
             idServidor=id_servidor,
@@ -170,25 +172,49 @@ def _enviar_keepalive_periodico(
 
         for adm_url in adm_urls:
             try:
-                with httpx.Client(timeout=5.0) as client:
-                    client.post(
+                with httpx.Client(timeout=2.0) as client:
+                    response = client.post(
                         f"{adm_url.rstrip('/')}/infra/keepalive",
                         json=payload,
                     )
+                    response.raise_for_status()
+                if adm_url in urls_offline:
+                    urls_offline.discard(adm_url)
+                    log_apresentacao(
+                        f"rastreador {id_servidor}",
+                        f"keepalive restabelecido com ADM em {adm_url}",
+                    )
             except Exception as exc:
-                print(
-                    f"[rastreador {id_servidor}] erro keepalive em {adm_url}: {exc}"
-                )
+                if adm_url not in urls_offline:
+                    urls_offline.add(adm_url)
+                    log_apresentacao(
+                        f"rastreador {id_servidor}",
+                        f"ADM indisponivel em {adm_url} ({exc})",
+                    )
 
         time.sleep(intervalo)
 
 
 def _sincronizar_sup_periodico(tracker: TrackerServer, sup_url: str, intervalo: float) -> None:
+    sup_offline = False
+
     while True:
         try:
             snapshot = tracker.snapshot_rastreios()
             with httpx.Client(timeout=5.0) as client:
-                client.post(f"{sup_url.rstrip('/')}/sync", json=snapshot)
+                response = client.post(f"{sup_url.rstrip('/')}/sync", json=snapshot)
+                response.raise_for_status()
+            if sup_offline:
+                sup_offline = False
+                log_apresentacao(
+                    f"rastreador {tracker.id_servidor}",
+                    f"sync SUP restabelecido em {sup_url}",
+                )
         except Exception as exc:
-            print(f"[rastreador {tracker.id_servidor}] erro sync SUP: {exc}")
+            if not sup_offline:
+                sup_offline = True
+                log_apresentacao(
+                    f"rastreador {tracker.id_servidor}",
+                    f"SUP indisponivel em {sup_url} ({exc})",
+                )
         time.sleep(intervalo)
