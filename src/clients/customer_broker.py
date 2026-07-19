@@ -8,8 +8,14 @@ import httpx
 
 from src.broker.config import BrokerSettings
 from src.broker.factory import criar_subscriber, fechar_subscriber
-from src.broker.topology import EXCHANGE_RASTREIO, routing_localizacao
-from src.core.models import ConfirmarEntrega, CriarPedido, EventoLocalizacao
+from src.broker.subscriber import Subscriber
+from src.broker.topology import (
+    EXCHANGE_PEDIDOS,
+    EXCHANGE_RASTREIO,
+    routing_entrega_confirmada,
+    routing_localizacao,
+)
+from src.core.models import ConfirmarEntrega, CriarPedido, EntregaConfirmada, EventoLocalizacao
 from src.core.serialization import to_message_dict
 from src.presentation_log import log_apresentacao
 
@@ -21,6 +27,11 @@ class CustomerBrokerError(RuntimeError):
 def parse_evento_localizacao(payload: dict) -> EventoLocalizacao:
     """Validate broker payload as EventoLocalizacao."""
     return EventoLocalizacao.model_validate(payload)
+
+
+def parse_entrega_confirmada(payload: dict) -> EntregaConfirmada:
+    """Validate broker payload as EntregaConfirmada."""
+    return EntregaConfirmada.model_validate(payload)
 
 
 def criar_pedido_via_adm(
@@ -107,6 +118,24 @@ def criar_callback_localizacao(id_cliente: str):
     return callback
 
 
+def criar_callback_entrega_confirmada(
+    id_cliente: str,
+    subscriber: Subscriber,
+):
+    """Build the RabbitMQ callback that ends tracking after delivery confirmation."""
+
+    def callback(payload: dict) -> None:
+        evento = parse_entrega_confirmada(payload)
+        log_apresentacao(
+            f"cliente {id_cliente}",
+            f"entrega confirmada: pedido={evento.idPedido}",
+        )
+        print("[cliente] rastreio encerrado.")
+        subscriber.stop_consuming()
+
+    return callback
+
+
 def executar_assinatura_rastreio(
     id_pedido: UUID,
     id_cliente: str,
@@ -127,9 +156,15 @@ def executar_assinatura_rastreio(
     callback = criar_callback_localizacao(id_cliente)
 
     subscriber.subscribe(EXCHANGE_RASTREIO, routing_key, callback)
+    subscriber.subscribe(
+        EXCHANGE_PEDIDOS,
+        routing_entrega_confirmada(id_pedido),
+        criar_callback_entrega_confirmada(id_cliente, subscriber),
+    )
     log_apresentacao(
         "cliente",
-        f"assinando {EXCHANGE_RASTREIO}/{routing_key} para pedido {id_pedido}",
+        f"assinando {EXCHANGE_RASTREIO}/{routing_key} e "
+        f"{EXCHANGE_PEDIDOS}/{routing_entrega_confirmada(id_pedido)} para pedido {id_pedido}",
     )
     log_apresentacao(
         f"cliente {id_cliente}",
