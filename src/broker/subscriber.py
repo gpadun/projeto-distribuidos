@@ -38,3 +38,10 @@ class Subscriber:
     def start_consuming(self) -> None:
         """Start RabbitMQ's blocking consume loop."""
         self.broker_connection.get_channel().start_consuming()
+
+    def stop_consuming(self) -> None:
+        """Stop the blocking consume loop started by start_consuming."""
+        try:
+            self.broker_connection.get_channel().stop_consuming()
+        except Exception:
+            pass

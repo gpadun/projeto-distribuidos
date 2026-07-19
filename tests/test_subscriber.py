@@ -18,6 +18,7 @@ class FakeChannel:
         self.callback = None
         self.acked = []
         self.nacked = []
+        self.stopped = False
 
     def exchange_declare(self, exchange, exchange_type, durable):
         pass
@@ -30,6 +31,12 @@ class FakeChannel:
 
     def basic_consume(self, queue, on_message_callback):
         self.callback = on_message_callback
+
+    def start_consuming(self):
+        pass
+
+    def stop_consuming(self):
+        self.stopped = True
 
     def basic_ack(self, delivery_tag):
         self.acked.append(delivery_tag)
@@ -74,3 +81,12 @@ def test_subscriber_nack_quando_json_nao_e_objeto():
 
     assert connection.channel.acked == []
     assert connection.channel.nacked == [(3, False)]
+
+
+def test_subscriber_stop_consuming():
+    connection = FakeConnection()
+    subscriber = Subscriber(connection)
+
+    subscriber.stop_consuming()
+
+    assert connection.channel.stopped is True

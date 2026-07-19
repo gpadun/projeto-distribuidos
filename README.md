@@ -40,8 +40,13 @@ src/
 scripts/
   start_adm.ps1          # Sobe um ADM
   start_cluster.ps1      # Sobe cluster de 3 ADMs
+  start_tracker.ps1      # Sobe um rastreador R
+  start_support.ps1      # Sobe um servidor SUP
+  start_driver.ps1       # Sobe um entregador (broker)
+  start_customer.ps1     # Sobe um cliente (demo/rastrear/confirmar)
   demo_estado.ps1        # Consulta estado dos ADMs
   demo_pedido.ps1        # Testa criacao de pedido
+  demo_falha_rastreador.ps1  # Inspeciona roteamento apos failover de R
   validate_cluster_manual.ps1 # Valida cluster, R dinamico e failover real
 tests/
   test_routing.py
@@ -97,8 +102,8 @@ pytest -q
 ```
 
 Com RabbitMQ rodando (`docker compose up -d`), a suite completa deve passar com
-**113 testes**. Sem o broker, os 4 testes de integracao sao pulados
-(**109 passed, 4 skipped**).
+**todos os testes** (inclui integracao). Sem o broker, os testes marcados com
+`@pytest.mark.integration` sao pulados. Confira a contagem atual com `pytest -q`.
 
 Suba a API:
 
@@ -345,14 +350,16 @@ Os scripts `start_adm.ps1` e `start_cluster.ps1` ja definem `RABBITMQ_ENABLED=1`
 
 ### Topologia de mensagens
 
-| Exchange   | Routing key                        | Publicado por | Consumido por           |
-|------------|------------------------------------|---------------|-------------------------|
-| `pedidos`  | `pedido.disponivel`                | ADM (lider)   | Restaurante, Entregador |
-| `pedidos`  | `pedido.{id}.preparado`            | ADM (lider)   | Demo/RabbitMQ           |
-| `pedidos`  | `pedido.{id}.entrega_confirmada`   | ADM (lider)   | Entregador              |
-| `infra`    | `roteamento.{servidor_rastreador}` | ADM (lider)   | Rastreador R            |
-| `rastreio` | `pedido.{id}`                      | Rastreador R  | Cliente                 |
-| `rastreio` | `pedido.{id}.desconexao`           | Rastreador R  | Cliente / ADM           |
+| Exchange      | Routing key                         | Publicado por | Consumido por           |
+|---------------|-------------------------------------|---------------|-------------------------|
+| `pedidos`     | `pedido.disponivel`                 | ADM (lider)   | Restaurante, Entregador |
+| `pedidos`     | `pedido.{id}.preparado`             | ADM (lider)   | Demo/RabbitMQ           |
+| `pedidos`     | `pedido.{id}.entrega_confirmada`    | ADM (lider)   | Entregador, Cliente     |
+| `pedidos`     | `pedido.{id}.rastreador_atualizado` | ADM (lider)   | Entregador              |
+| `infra`       | `roteamento.{servidor_rastreador}`  | ADM (lider)   | Rastreador R            |
+| `localizacao` | `rastreador.{id_rastreador}`        | Entregador    | Rastreador R            |
+| `rastreio`    | `pedido.{id}`                       | Rastreador R  | Cliente                 |
+| `rastreio`    | `pedido.{id}.desconexao`            | Rastreador R  | Cliente / ADM           |
 
 Definicoes centralizadas em `src/broker/topology.py`.
 
@@ -384,7 +391,8 @@ Suite completa:
 pytest -q
 ```
 
-Esperado: **113 passed** (com Docker) ou **109 passed, 4 skipped** (sem Docker).
+Confira a contagem atual com `pytest -q` (com Docker deve incluir os testes de
+integracao; sem Docker eles sao pulados).
 
 Rodar sem integracao:
 
@@ -411,7 +419,9 @@ docker compose logs -f rabbitmq
 - `POST /pedidos/aceitar`: associa entregador e servidor rastreador;
 - `POST /pedidos/confirmar`: confirma entrega e publica `EntregaConfirmada`.
 
-Resposta **409** em nao-lideres, com `liderAtual` no corpo.
+Resposta **409** em nao-lideres, com `liderAtual` no corpo. Ao aceitar um pedido
+ja atribuido, retorna **409** com `motivo: pedido_ja_aceito` e
+`idEntregadorAtual`.
 
 ### Exemplos de Payload HTTP
 
@@ -508,6 +518,48 @@ Este roteiro inclui o restaurante como processo distribuido: ele consome
    - Rastreador: `pedido ... atribuido`, `localizacao recebida`
    - Cliente: `localizacao: pedido=...`
    - SUP: `sync recebido ...`
+6. Confirmar entrega em **outro terminal** (o cliente em `demo` encerra sozinho):
+
+```powershell
+.\scripts\start_customer.ps1 -Acao confirmar -IdCliente cliente-1 -IdPedido "UUID-DO-PEDIDO"
+```
+
+Logs esperados no terminal do cliente em rastreio:
+
+```text
+[cliente cliente-1] entrega confirmada: pedido=...
+[cliente] rastreio encerrado.
+```
+
+### Multiplos clientes e entregadores
+
+Cada processo usa um ID proprio (`-IdCliente`, `-IdEntregador`). Exemplo com
+dois de cada:
+
+```powershell
+# Terminais de entregador
+.\scripts\start_driver.ps1 -IdEntregador entregador-1
+.\scripts\start_driver.ps1 -IdEntregador entregador-2
+
+# Terminais de cliente (escalonar alguns segundos entre pedidos)
+.\scripts\start_customer.ps1 -Acao demo -IdCliente cliente-1
+.\scripts\start_customer.ps1 -Acao demo -IdCliente cliente-2
+```
+
+Comportamento atual (alinhado ao PDF — ADM **mantem pedidos sem entregador**):
+
+| Situacao | O que acontece |
+|----------|----------------|
+| Pedido novo, entregador livre | Aceita na hora e inicia GPS |
+| Pedido novo, entregador ocupado | Pedido fica na fila do ADM (`pedidosSemEntregador`) |
+| Entregador confirma entrega / fica livre | Consulta a fila no ADM e assume o proximo pedido pendente |
+| Dois entregadores no mesmo pedido | Apenas o primeiro aceite vale; o segundo recebe 409 `pedido_ja_aceito` |
+| Mais pedidos que entregadores | Clientes extras aguardam na fila ate um entregador liberar |
+
+Confirme entregadores e rastreadores ativos com `.\scripts\demo_estado.ps1`
+(campo `rastreadoresAtivos`). O rastreador responsavel e escolhido por
+**consistent hashing** no UUID do pedido — com poucos pedidos e normal cair
+sempre no mesmo R; com mais pedidos a distribuicao entre R1 e R2 aparece.
 
 ### Failover de rastreador
 
@@ -527,3 +579,7 @@ Logs podem ser silenciados com `PRESENTATION_LOG=0`.
   prova de conceito nao implementa persistencia duravel em banco de dados;
   portanto, reiniciar todos os processos simultaneamente zera pedidos, rastreios
   e mapas de roteamento.
+- Roteamento de pedido para entregador especifico (hoje e "primeiro livre que aceitar")
+- Limite configuravel de pedidos simultaneos por entregador (hoje: um por vez)
+- Rejeicao imediata ao cliente quando todos os entregadores estao ocupados (spec manda fila no ADM)
+- Exemplos de payload HTTP no README

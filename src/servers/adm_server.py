@@ -65,6 +65,17 @@ class ReplicacaoSemMaioriaError(Exception):
         )
 
 
+class PedidoJaAceitoError(Exception):
+    """Raised when a driver tries to accept an order that already has one."""
+
+    def __init__(self, id_pedido: UUID, id_entregador_atual: str):
+        self.id_pedido = id_pedido
+        self.id_entregador_atual = id_entregador_atual
+        super().__init__(
+            f"pedido {id_pedido} ja aceito por {id_entregador_atual}"
+        )
+
+
 class ADMServer:
     """Coordinates orders, tracker routing, heartbeat state and leader election."""
 
@@ -177,6 +188,14 @@ class ADMServer:
         pedido = self.pedidos.get(requisicao.idPedido)
         if pedido is None:
             raise KeyError("pedido nao encontrado")
+
+        if requisicao.idPedido not in self.pedidos_sem_entregador:
+            entregador_atual = pedido.idEntregador
+            if entregador_atual is None:
+                raise RuntimeError("pedido sem entregador fora da fila de disponiveis")
+            if entregador_atual == requisicao.idEntregador:
+                return pedido
+            raise PedidoJaAceitoError(requisicao.idPedido, entregador_atual)
 
         servidor = self._escolher_servidor_rastreador(requisicao.idPedido)
         pedido.idEntregador = requisicao.idEntregador
@@ -306,7 +325,7 @@ class ADMServer:
         afetados = [
             id_pedido
             for id_pedido, servidor in self.mapa_pedido_servidor.items()
-            if servidor == id_servidor
+            if servidor == id_servidor and id_pedido in self.pedidos
         ]
         afetados_set = set(afetados)
         for id_pedido_str in backup:
@@ -314,12 +333,16 @@ class ADMServer:
                 pedido_uuid = UUID(id_pedido_str)
             except (TypeError, ValueError):
                 continue
+            if pedido_uuid not in self.pedidos:
+                continue
             if pedido_uuid not in afetados_set:
                 afetados.append(pedido_uuid)
                 afetados_set.add(pedido_uuid)
 
         redistribuidos: dict[UUID, str] = {}
         for id_pedido in afetados:
+            if id_pedido not in self.pedidos:
+                continue
             if not self.servidores_rastreadores_ativos:
                 break
 

@@ -7,6 +7,7 @@ import pytest
 
 from src.clients.customer_broker import (
     CustomerBrokerError,
+    criar_callback_entrega_confirmada,
     criar_callback_localizacao,
     criar_pedido_via_adm,
     parse_evento_localizacao,
@@ -115,3 +116,20 @@ def test_callback_localizacao_imprime_evento(capsys):
     saida = capsys.readouterr().out
     assert "localizacao" in saida
     assert str(id_pedido) in saida
+
+
+def test_callback_entrega_confirmada_encerra_rastreio(capsys):
+    id_pedido = uuid4()
+    paradas = []
+
+    class FakeSubscriber:
+        def stop_consuming(self):
+            paradas.append(True)
+
+    callback = criar_callback_entrega_confirmada("cliente-1", FakeSubscriber())
+    callback({"idPedido": str(id_pedido), "timestamp": 99})
+
+    assert paradas == [True]
+    saida = capsys.readouterr().out
+    assert "entrega confirmada" in saida
+    assert "rastreio encerrado" in saida

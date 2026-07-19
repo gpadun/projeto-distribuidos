@@ -1,8 +1,12 @@
 param(
-    [string]$AdmUrl = "http://127.0.0.1:8003"
+    [string]$AdmUrl = ""
 )
 
 $ErrorActionPreference = "Stop"
+
+$scriptDir = $PSScriptRoot
+. (Join-Path $scriptDir "resolve_adm_lider.ps1")
+$AdmUrl = Resolve-AdmLiderUrl -AdmUrl $AdmUrl
 
 Write-Host ""
 Write-Host "===== Estado ADM lider ($AdmUrl) ====="
@@ -20,6 +24,7 @@ try {
         Write-Host "(expirado = sem keepalive recente; suba os rastreadores ou aguarde failover)"
     }
     Write-Host "roteamento                      : $($estado.roteamento | ConvertTo-Json -Compress)"
+    Write-Host "pedidosAtivos                   : $($estado.pedidos.Count)"
 }
 catch {
     Write-Host "Erro ao consultar ADM: $($_.Exception.Message)"

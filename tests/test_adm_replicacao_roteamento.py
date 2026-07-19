@@ -3,6 +3,8 @@
 import asyncio
 from uuid import uuid4
 
+import pytest
+
 from src.core.models import (
     AceitarPedido,
     ConfirmarEntrega,
@@ -11,8 +13,7 @@ from src.core.models import (
     ReplicacaoRoteamento,
     TipoServidor,
 )
-from src.servers.adm_server import ADMServer
-from src.servers.adm_server import ReplicacaoSemMaioriaError
+from src.servers.adm_server import ADMServer, PedidoJaAceitoError, ReplicacaoSemMaioriaError
 
 
 class ClusterRouter:
@@ -200,6 +201,83 @@ def test_entrada_de_rastreador_rebalanceia_pedidos_afetados():
 
     assert adm.mapa_pedido_servidor[id_pedido] == "rastreador-3"
     assert adm.pedidos[id_pedido].servidorRastreadorResponsavel == "rastreador-3"
+
+
+def test_aceitar_pedido_rejeita_segundo_entregador():
+    adm = ADMServer(
+        id_servidor="adm-3",
+        servidores_adm=["adm-3"],
+        servidores_rastreadores=["rastreador-1", "rastreador-2"],
+    )
+    adm.lider_atual = "adm-3"
+    id_pedido = uuid4()
+
+    run(
+        adm.criar_pedido(
+            CriarPedido(
+                idPedido=id_pedido,
+                idCliente="cliente-1",
+                idRestaurante="restaurante-1",
+                timestamp=1,
+            )
+        )
+    )
+    _ativar_rastreadores(adm)
+
+    run(
+        adm.aceitar_pedido(
+            AceitarPedido(
+                idPedido=id_pedido,
+                idEntregador="entregador-1",
+                timestamp=2,
+            )
+        )
+    )
+
+    with pytest.raises(PedidoJaAceitoError) as exc_info:
+        run(
+            adm.aceitar_pedido(
+                AceitarPedido(
+                    idPedido=id_pedido,
+                    idEntregador="entregador-2",
+                    timestamp=3,
+                )
+            )
+        )
+
+    assert exc_info.value.id_entregador_atual == "entregador-1"
+
+
+def test_aceitar_pedido_idempotente_para_mesmo_entregador():
+    adm = ADMServer(
+        id_servidor="adm-3",
+        servidores_adm=["adm-3"],
+        servidores_rastreadores=["rastreador-1", "rastreador-2"],
+    )
+    adm.lider_atual = "adm-3"
+    id_pedido = uuid4()
+
+    run(
+        adm.criar_pedido(
+            CriarPedido(
+                idPedido=id_pedido,
+                idCliente="cliente-1",
+                idRestaurante="restaurante-1",
+                timestamp=1,
+            )
+        )
+    )
+    _ativar_rastreadores(adm)
+
+    requisicao = AceitarPedido(
+        idPedido=id_pedido,
+        idEntregador="entregador-1",
+        timestamp=2,
+    )
+    primeiro = run(adm.aceitar_pedido(requisicao))
+    segundo = run(adm.aceitar_pedido(requisicao))
+
+    assert segundo.idEntregador == primeiro.idEntregador == "entregador-1"
 
 
 def test_lider_propaga_remocao_ao_confirmar_entrega():
