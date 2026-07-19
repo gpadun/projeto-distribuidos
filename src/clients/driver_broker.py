@@ -38,6 +38,15 @@ class DriverBrokerError(RuntimeError):
     """Raised when the driver cannot accept an order through ADM."""
 
 
+class PedidoJaAceitoError(DriverBrokerError):
+    """Raised when another driver already accepted the order."""
+
+
+def entregador_tem_entrega_ativa(parar_gps: dict[UUID, threading.Event]) -> bool:
+    """Return True when the driver still has at least one active delivery."""
+    return any(not event.is_set() for event in parar_gps.values())
+
+
 def parse_pedido_disponivel(payload: dict) -> PedidoDisponivel:
     """Validate broker payload as PedidoDisponivel."""
     return PedidoDisponivel.model_validate(payload)
@@ -86,6 +95,10 @@ def aceitar_pedido_via_adm(
 
         if response.status_code == 409:
             detail = response.json().get("detail", {})
+            if detail.get("motivo") == "pedido_ja_aceito":
+                raise PedidoJaAceitoError(
+                    f"pedido ja aceito por {detail.get('idEntregadorAtual', '?')}"
+                )
             id_lider = detail.get("liderAtual")
             url_lider = url_do_adm(id_lider, urls_candidatas) if id_lider else None
             if url_lider and url_lider not in tentativas:
@@ -170,7 +183,14 @@ def criar_callback_pedido_disponivel(
 
         if not aceitar_automatico:
             return
-        
+
+        if entregador_tem_entrega_ativa(parar_gps):
+            log_apresentacao(
+                "entregador",
+                f"pedido ignorado (ocupado): idPedido={evento.idPedido}",
+            )
+            return
+
         if evento.idPedido in pedidos_aceitos:
             return
 
@@ -181,6 +201,12 @@ def criar_callback_pedido_disponivel(
                 evento.idPedido,
                 adm_urls=carregar_adm_urls(),
             )
+        except PedidoJaAceitoError:
+            log_apresentacao(
+                "entregador",
+                f"pedido ja aceito por outro: idPedido={evento.idPedido}",
+            )
+            return
         except DriverBrokerError as exc:
             log_apresentacao("entregador", f"erro ao aceitar pedido: {exc}")
             return

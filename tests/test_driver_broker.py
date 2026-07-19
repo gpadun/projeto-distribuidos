@@ -10,11 +10,13 @@ import pytest
 from src.broker.config import BrokerSettings
 from src.clients.driver_broker import (
     DriverBrokerError,
+    PedidoJaAceitoError,
     _publicar_localizacoes_periodicas,
     aceitar_pedido_via_adm,
     criar_callback_entrega_confirmada,
     criar_callback_pedido_disponivel,
     criar_callback_rastreador_atualizado,
+    entregador_tem_entrega_ativa,
     parse_pedido_disponivel,
 )
 
@@ -81,6 +83,51 @@ def test_aceitar_pedido_via_adm_sucesso(monkeypatch):
     assert resultado["servidorRastreadorResponsavel"] == "rastreador-1"
     assert chamadas[0][0] == "http://127.0.0.1:8003/pedidos/aceitar"
     assert chamadas[0][1]["idEntregador"] == "entregador-1"
+
+
+def test_aceitar_pedido_via_adm_retorna_erro_quando_pedido_ja_aceito(monkeypatch):
+    class FakeResponse:
+        status_code = 409
+
+        @staticmethod
+        def json():
+            return {
+                "detail": {
+                    "motivo": "pedido_ja_aceito",
+                    "idEntregadorAtual": "entregador-1",
+                }
+            }
+
+    class FakeClient:
+        def __init__(self, timeout):
+            del timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, url, json):
+            del url, json
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    monkeypatch.setattr(
+        "src.clients.driver_broker.resolver_adm_lider_url",
+        lambda **kwargs: "http://127.0.0.1:8003",
+    )
+    monkeypatch.setattr(
+        "src.clients.driver_broker.carregar_adm_urls",
+        lambda: ["http://127.0.0.1:8003"],
+    )
+
+    with pytest.raises(PedidoJaAceitoError, match="entregador-1"):
+        aceitar_pedido_via_adm(
+            "http://127.0.0.1:8003",
+            "entregador-2",
+            uuid4(),
+        )
 
 
 def test_aceitar_pedido_via_adm_retorna_erro_quando_nao_e_lider(monkeypatch):
@@ -222,6 +269,46 @@ def test_callback_imprime_e_aceita_pedido(monkeypatch, capsys):
     assert len(threads) == 1
     assert rastreador_por_pedido[id_pedido] == "rastreador-2"
     assert "pedido disponivel" in capsys.readouterr().out
+
+
+def test_callback_ignora_pedido_quando_entregador_ocupado(monkeypatch, capsys):
+    id_pedido = uuid4()
+    aceitos = []
+
+    monkeypatch.setattr(
+        "src.clients.driver_broker.aceitar_pedido_via_adm",
+        lambda *args, **kwargs: aceitos.append(args) or {},
+    )
+
+    parar_gps = {uuid4(): threading.Event()}
+    callback = criar_callback_pedido_disponivel(
+        id_entregador="entregador-1",
+        adm_url="http://127.0.0.1:8003",
+        aceitar_automatico=True,
+        broker_settings=BrokerSettings(enabled=True),
+        parar_gps=parar_gps,
+        rastreador_por_pedido={},
+    )
+    callback(
+        {
+            "idPedido": str(id_pedido),
+            "idRestaurante": "restaurante-1",
+            "timestamp": 1,
+        }
+    )
+
+    assert aceitos == []
+    assert "pedido ignorado (ocupado)" in capsys.readouterr().out
+
+
+def test_entregador_tem_entrega_ativa():
+    id_pedido = uuid4()
+    parar = threading.Event()
+
+    assert not entregador_tem_entrega_ativa({})
+    assert entregador_tem_entrega_ativa({id_pedido: parar})
+    parar.set()
+    assert not entregador_tem_entrega_ativa({id_pedido: parar})
 
 
 def test_callback_rastreador_atualizado():

@@ -23,7 +23,12 @@ from src.core.models import (
 from src.infra.adm_transport import criar_adm_com_transporte_http
 from src.core.serialization import to_message_dict
 from src.demo_page import DEMO_HTML
-from src.servers.adm_server import ADMServer, NaoELiderError, ReplicacaoSemMaioriaError
+from src.servers.adm_server import (
+    ADMServer,
+    NaoELiderError,
+    PedidoJaAceitoError,
+    ReplicacaoSemMaioriaError,
+)
 
 
 def parse_adm_peers(raw: str) -> dict[str, str]:
@@ -107,6 +112,19 @@ def _http_exception_nao_lider(exc: NaoELiderError) -> HTTPException:
             "mensagem": "este servidor ADM nao e o lider; reenvie o comando ao lider atual",
             "idServidor": exc.id_servidor,
             "liderAtual": exc.lider_atual,
+        },
+    )
+
+
+def _http_exception_pedido_ja_aceito(exc: PedidoJaAceitoError) -> HTTPException:
+    """Tell the driver another peer already accepted this order."""
+    return HTTPException(
+        status_code=409,
+        detail={
+            "motivo": "pedido_ja_aceito",
+            "mensagem": str(exc),
+            "idPedido": str(exc.id_pedido),
+            "idEntregadorAtual": exc.id_entregador_atual,
         },
     )
 
@@ -215,6 +233,8 @@ def create_app(adm_server: ADMServer | None = None) -> FastAPI:
             return await adm.aceitar_pedido(requisicao)
         except NaoELiderError as exc:
             raise _http_exception_nao_lider(exc) from exc
+        except PedidoJaAceitoError as exc:
+            raise _http_exception_pedido_ja_aceito(exc) from exc
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=_exception_detail(exc)) from exc
         except ReplicacaoSemMaioriaError as exc:
