@@ -8,10 +8,10 @@ Ultima validacao:
 
 ```text
 pytest -q
-113 passed
+# confira a contagem atual apos o merge (com RabbitMQ: suite completa)
 
 # sem RabbitMQ (docker compose stop):
-# 109 passed, 4 skipped
+# testes @pytest.mark.integration sao pulados
 
 pytest -q -m integration
 4 passed
@@ -40,6 +40,8 @@ pytest -q -m integration
 - [x] Criar este checklist de acompanhamento.
 - [x] Adicionar no README um roteiro completo de apresentacao.
 - [x] Adicionar no README comandos para rodar todos os componentes.
+- [x] Adicionar no README demo com multiplos clientes e entregadores.
+- [x] Documentar fila de pedidos sem entregador e retentativa ao liberar entregador.
 - [x] Adicionar no README como simular falha de servidor.
 - [x] Adicionar painel web simples em `/demo` para apresentacao.
 - [x] Adicionar visualizacao do fluxo distribuido no painel `/demo`.
@@ -92,6 +94,7 @@ pytest -q -m integration
 - [x] Reutilizar conexao RabbitMQ aberta ao recriar canal fechado.
 - [x] Tratar erro de payload/callback no subscriber com `basic_nack`.
 - [x] Rejeitar payload JSON que nao seja objeto no subscriber.
+- [x] Implementar `stop_consuming` no subscriber para encerrar assinaturas.
 - [x] Criar `docker-compose.yml` para RabbitMQ.
 - [x] Validar publicacao real usando RabbitMQ rodando.
 - [x] Validar assinatura real usando RabbitMQ rodando.
@@ -123,6 +126,7 @@ pytest -q -m integration
 - [x] Processar `PrepararPedido` enviado pelo restaurante.
 - [x] Publicar `PedidoPreparado`.
 - [x] Processar `AceitarPedido`.
+- [x] Rejeitar segundo aceite do mesmo pedido (409 `pedido_ja_aceito`).
 - [x] Escolher Servidor Rastreador por consistent hashing.
 - [x] Publicar `AtualizacaoRoteamento`.
 - [x] Processar `ConfirmarEntrega`.
@@ -180,7 +184,12 @@ pytest -q -m integration
 - [x] Gerar coordenadas falsas.
 - [x] Enviar localizacoes periodicas quando conectado a um Tracker injetado.
 - [x] Fazer mock customer assinar rastreio real via RabbitMQ.
+- [x] Fazer mock customer assinar `EntregaConfirmada` e encerrar rastreio ao confirmar.
 - [x] Fazer mock driver publicar `LocalizacaoEntregador` real via RabbitMQ.
+- [x] Entregador ignorar novos pedidos enquanto ocupado (fila permanece no ADM).
+- [x] Entregador assumir pedido pendente da fila ao ficar livre.
+- [x] Entregador redescobrir ADM lider ao aceitar pedido apos falha de ADM.
+- [x] Suportar multiplos clientes e entregadores via `-IdCliente` / `-IdEntregador`.
 - [x] Criar modo de demo com comandos simples.
 
 ## Testes
@@ -214,6 +223,8 @@ pytest -q -m integration
 - [x] Testar replicacao de roteamento e pedidos entre ADMs.
 - [x] Testar falha quando replicacao ADM nao atinge maioria.
 - [x] Testar rebalanceamento de pedido afetado pela entrada de novo R.
+- [x] Testar rejeicao de aceite duplicado de pedido.
+- [x] Testar fila de pedidos pendentes ao liberar entregador.
 - [x] Testar confirmar entrega no novo lider apos falha do lider ADM.
 - [x] Testar cenario de falha com processos reais.
 - [x] Automatizar validacao multiprocesso real com `pytest -m integration`.
@@ -235,6 +246,8 @@ pytest -q -m integration
 - [x] Entregador envia localizacoes.
 - [x] Cliente recebe localizacoes.
 - [x] Cliente confirma entrega.
+- [x] Cliente encerra automaticamente ao receber `EntregaConfirmada` (confirmacao de outro terminal).
+- [x] Demo com multiplos clientes e entregadores (fila no ADM).
 
 ## Demonstracao de Falha
 
@@ -264,6 +277,9 @@ pytest -q -m integration
 - [x] Logar pedido criado (`[adm]` + `[cliente]`).
 - [x] Logar pedido recebido/preparado pelo restaurante.
 - [x] Logar pedido aceito (`[adm]` + `[entregador]`).
+- [x] Logar pedido em espera no ADM quando entregador ocupado (`[entregador]`).
+- [x] Logar pedido pendente assumido da fila (`[entregador]`).
+- [x] Logar entrega confirmada no cliente e encerramento do rastreio (`[cliente]`).
 - [x] Logar servidor rastreador escolhido (`[adm]` na aceitacao + `[rastreador]` no roteamento).
 - [x] Logar localizacao recebida (`[rastreador]` + `[cliente]`).
 - [x] Logar localizacao ignorada por timestamp antigo (`[rastreador]`).
@@ -282,14 +298,18 @@ Desabilitar logs: `PRESENTATION_LOG=0`.
 - [x] Implementar demo local com multiplos processos.
 - [x] Adicionar logs de apresentacao.
 - [x] Atualizar README com roteiro final.
+- [ ] Endpoint dedicado `GET /pedidos/sem-entregador` (hoje entregador usa `GET /estado`).
+- [ ] Timeout opcional no cliente para avisar "ainda na fila" durante demo longa.
 
 ## Observacoes
 
 - [x] Projeto correto como prova de conceito em memoria seguindo o PDF, com
   replicacao entre ADMs e backup nos SUPs durante a execucao, mas sem
   persistencia duravel se todos os processos forem reiniciados simultaneamente.
-- [x] Testes atuais passando.
+- [x] Testes atuais passando (confira com `pytest -q`).
 - [x] Demo ADM com 3 processos e RabbitMQ real implementadas.
-- [x] Demo E2E completa (R1/R2, SUP, cliente e entregador via broker) e failover manual validados.
+- [x] Demo E2E completa (R1/R2, SUP, cliente, restaurante e entregador via broker) e failover manual validados.
 - [x] Replicacao ADM (roteamento + pedidos) validada manualmente com eleicao de lider.
+- [x] Fila de pedidos sem entregador conforme spec; entregador retenta ao ficar livre.
+- [x] Cliente encerra rastreio ao receber `EntregaConfirmada` publicada pelo ADM.
 - [x] Atualizar este checklist sempre que uma etapa nova for implementada.
