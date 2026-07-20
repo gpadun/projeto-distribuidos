@@ -168,10 +168,11 @@ Durante o teste, as secoes **Cliente**, **Restaurante**, **Entregador** e
 **Mapa Simulado** mostram o papel de cada participante no fluxo distribuido.
 Quando o entregador aceita o pedido, o mapa anima o deslocamento do entregador
 entre restaurante e cliente. Antes disso, a barra tambem avanca nas etapas
-`Criar pedido` e `Preparar restaurante` para ilustrar o fluxo ate o restaurante.
-Com o entregador em rota, o painel exibe percentual do fluxo, coordenadas
-simuladas e o rastreador responsavel. A fonte de verdade continua sendo o
-estado dos ADMs e as mensagens do broker.
+`Criar pedido` e `Preparar restaurante` para ilustrar o fluxo ate o restaurante,
+mas a porcentagem da rota permanece em `0%`. Com o entregador em rota, o painel
+passa a contar a rota de `0%` ate `100%`, exibindo coordenadas simuladas e o
+rastreador responsavel. A fonte de verdade continua sendo o estado dos ADMs e
+as mensagens do broker.
 
 Aguarde **5 a 10 segundos** para os heartbeats entre os ADMs. Depois confira:
 
@@ -590,7 +591,8 @@ comando de confirmacao do cliente.
 
 Para validar especificamente o GPS com destino simulado, deixe o entregador
 rodando por alguns ciclos depois de aceitar um pedido. O painel deve animar o
-ponto do entregador ate `100% do fluxo` e o terminal do entregador deve registrar
+ponto do entregador ate o cliente e contar a rota ate `100%`; o terminal do
+entregador deve registrar
 `destino simulado alcancado`; depois disso, confirme a entrega pelo cliente ou
 pelo botao **Confirmar entrega** no painel.
 

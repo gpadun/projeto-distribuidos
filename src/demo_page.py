@@ -508,7 +508,7 @@ DEMO_HTML = """
           <div class="place end">C</div>
           <div class="driver-dot" id="driver-dot">E</div>
           <div class="route-details">
-            <strong id="route-percent">0% do fluxo</strong>
+            <strong id="route-percent">0% da rota</strong>
             <span id="route-coords" class="mono">GPS aguardando</span>
           </div>
           <div class="map-status">
@@ -596,7 +596,7 @@ DEMO_HTML = """
     }
 
     function routeProgress(order) {
-      if (!order || !order.idEntregador) return 0;
+      if (!order || !order.idEntregador) return { visual: 0, delivery: 0 };
       const key = routeStorageKey(order);
       let startedAt = Number(localStorage.getItem(key));
       if (!startedAt) {
@@ -604,7 +604,10 @@ DEMO_HTML = """
         localStorage.setItem(key, String(startedAt));
       }
       const deliveryProgress = Math.min(((Date.now() - startedAt) / routeDurationMs) * 100, 100);
-      return deliveryStartProgress + ((100 - deliveryStartProgress) * (deliveryProgress / 100));
+      return {
+        visual: deliveryStartProgress + ((100 - deliveryStartProgress) * (deliveryProgress / 100)),
+        delivery: deliveryProgress,
+      };
     }
 
     function routeCoords(progress) {
@@ -666,6 +669,7 @@ DEMO_HTML = """
 
     function renderMap(order) {
       let progress = 0;
+      let deliveryPercent = 0;
       let status = "Aguardando pedido";
       let coords = "GPS aguardando";
       if (order) {
@@ -677,12 +681,14 @@ DEMO_HTML = """
         status = "Pedido pronto; aguardando entregador";
       }
       if (order && order.idEntregador) {
-        progress = routeProgress(order);
-        const rounded = Math.round(progress);
-        status = progress >= 100
+        const route = routeProgress(order);
+        progress = route.visual;
+        deliveryPercent = route.delivery;
+        const rounded = Math.round(route.delivery);
+        status = route.delivery >= 100
           ? `Destino alcancado (${order.servidorRastreadorResponsavel || "rastreador"})`
           : `Em rota ${rounded}% (${order.servidorRastreadorResponsavel || "rastreador"})`;
-        coords = routeCoords(progress);
+        coords = routeCoords(route.delivery);
       }
       const left = 11 + (progress * 0.78);
       $("route-progress").style.width = `${progress}%`;
@@ -690,7 +696,7 @@ DEMO_HTML = """
       $("driver-dot").classList.toggle("moving", Boolean(order && order.idEntregador && progress < 100));
       $("driver-dot").classList.toggle("arrived", Boolean(order && order.idEntregador && progress >= 100));
       $("map-status").textContent = status;
-      $("route-percent").textContent = `${Math.round(progress)}% do fluxo`;
+      $("route-percent").textContent = `${Math.round(deliveryPercent)}% da rota`;
       $("route-coords").textContent = coords;
     }
 
