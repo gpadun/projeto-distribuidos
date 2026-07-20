@@ -228,6 +228,121 @@ DEMO_HTML = """
       gap: 8px;
     }
 
+    .roles {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .role {
+      min-height: 170px;
+      display: grid;
+      gap: 10px;
+      align-content: start;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcff;
+    }
+
+    .role h3 {
+      margin: 0;
+      font-size: 14px;
+    }
+
+    .role p {
+      min-height: 34px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .role button {
+      width: 100%;
+    }
+
+    .map {
+      position: relative;
+      min-height: 190px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background:
+        linear-gradient(90deg, rgba(21, 94, 239, 0.08) 1px, transparent 1px),
+        linear-gradient(0deg, rgba(21, 94, 239, 0.08) 1px, transparent 1px),
+        #fbfcff;
+      background-size: 32px 32px;
+    }
+
+    .route {
+      position: absolute;
+      left: 11%;
+      right: 11%;
+      top: 50%;
+      height: 4px;
+      border-radius: 999px;
+      background: #b8c4d6;
+    }
+
+    .route-progress {
+      display: block;
+      width: 0%;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--blue);
+      transition: width 220ms ease;
+    }
+
+    .place, .driver-dot {
+      position: absolute;
+      transform: translate(-50%, -50%);
+    }
+
+    .place {
+      display: grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      border: 2px solid #98a2b3;
+      border-radius: 50%;
+      background: #fff;
+      color: var(--muted);
+      font-weight: 800;
+      font-size: 12px;
+    }
+
+    .place.start { left: 11%; top: 50%; }
+    .place.end { left: 89%; top: 50%; border-color: var(--ok); color: var(--ok); }
+
+    .driver-dot {
+      left: 11%;
+      top: 50%;
+      display: grid;
+      place-items: center;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background: var(--blue);
+      color: #fff;
+      box-shadow: 0 8px 18px rgba(21, 94, 239, 0.25);
+      font-size: 16px;
+      transition: left 220ms ease;
+    }
+
+    .map-status {
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      bottom: 12px;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
     .step {
       min-height: 56px;
       padding: 9px;
@@ -263,7 +378,7 @@ DEMO_HTML = """
       main { grid-template-columns: 1fr; padding: 12px; }
       header { align-items: flex-start; flex-direction: column; padding: 14px 12px; }
       .toolbar, .form-grid, .status-row { grid-template-columns: 1fr; }
-      .flow, .timeline { grid-template-columns: 1fr; }
+      .flow, .timeline, .roles { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -335,6 +450,43 @@ DEMO_HTML = """
       </section>
 
       <section>
+        <h2>Interfaces da Demo</h2>
+        <div class="roles">
+          <div class="role">
+            <h3>Cliente</h3>
+            <p id="cliente-view">Cria o pedido e acompanha a entrega.</p>
+            <button class="primary" id="cliente-criar">Criar pedido</button>
+            <button id="cliente-confirmar">Confirmar recebimento</button>
+          </div>
+          <div class="role">
+            <h3>Restaurante</h3>
+            <p id="restaurante-view">Aguarda pedido disponivel para preparo.</p>
+            <button id="restaurante-preparar">Marcar como preparado</button>
+          </div>
+          <div class="role">
+            <h3>Entregador</h3>
+            <p id="entregador-view">Aceita pedido e inicia envio de GPS simulado.</p>
+            <button id="entregador-aceitar">Aceitar pedido</button>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Mapa Simulado</h2>
+        <div class="map">
+          <div class="route"><span class="route-progress" id="route-progress"></span></div>
+          <div class="place start">R</div>
+          <div class="place end">C</div>
+          <div class="driver-dot" id="driver-dot">E</div>
+          <div class="map-status">
+            <span>Restaurante</span>
+            <span id="map-status">Aguardando pedido</span>
+            <span>Cliente</span>
+          </div>
+        </div>
+      </section>
+
+      <section>
         <h2>Etapas do Pedido</h2>
         <div class="timeline" id="timeline"></div>
       </section>
@@ -375,7 +527,14 @@ DEMO_HTML = """
         ...options,
       });
       const text = await response.text();
-      const body = text ? JSON.parse(text) : {};
+      let body = {};
+      if (text) {
+        try {
+          body = JSON.parse(text);
+        } catch {
+          body = { detail: text };
+        }
+      }
       if (!response.ok) {
         const detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
         throw new Error(detail || `HTTP ${response.status}`);
@@ -424,17 +583,64 @@ DEMO_HTML = """
       }).join("");
     }
 
+    function renderRoleViews(order) {
+      const pedidoId = $("pedido").value || "-";
+      const cliente = $("cliente").value || "cliente";
+      const restaurante = $("restaurante").value || "restaurante";
+      const entregador = $("entregador").value || "entregador";
+
+      $("cliente-view").textContent = order
+        ? `${cliente} acompanha pedido ${pedidoId.slice(0, 8)}.`
+        : `${cliente} ainda nao criou pedido.`;
+      $("restaurante-view").textContent = order && order.restaurantePreparou
+        ? `${restaurante} marcou o pedido como preparado.`
+        : order
+          ? `${restaurante} recebeu o pedido e pode preparar.`
+          : `${restaurante} aguarda novo pedido.`;
+      $("entregador-view").textContent = order && order.idEntregador
+        ? `${order.idEntregador} esta em rota via ${order.servidorRastreadorResponsavel || "rastreador"}.`
+        : order
+          ? `${entregador} pode aceitar o pedido disponivel.`
+          : `${entregador} aguarda pedidos disponiveis.`;
+    }
+
+    function renderMap(order) {
+      let progress = 0;
+      let status = "Aguardando pedido";
+      if (order) {
+        progress = 18;
+        status = "Pedido criado";
+      }
+      if (order && order.restaurantePreparou) {
+        progress = 34;
+        status = "Restaurante preparando";
+      }
+      if (order && order.idEntregador) {
+        progress = 68;
+        status = `Em rota (${order.servidorRastreadorResponsavel || "rastreador"})`;
+      }
+      const left = 11 + (progress * 0.78);
+      $("route-progress").style.width = `${progress}%`;
+      $("driver-dot").style.left = `${left}%`;
+      $("map-status").textContent = status;
+    }
+
     function renderCluster() {
       const cluster = state.cluster;
       const self = currentState();
       const order = currentOrder();
+      const claimedLeaders = cluster.estados.filter((adm) => adm.online && adm.souLider);
       $("self-id").textContent = cluster.idServidor;
       $("leader-id").textContent = cluster.liderAtual;
       $("rabbit").textContent = self && self.rabbitmqHabilitado ? "on" : "off";
 
       $("adms").innerHTML = cluster.estados.map((adm) => {
         const status = adm.online ? badge("online", "ok") : badge("offline", "bad");
-        const lider = adm.souLider ? badge("lider", "ok") : `<span class="muted">${adm.liderAtual || "-"}</span>`;
+        const lider = adm.souLider && claimedLeaders.length > 1
+          ? badge("lider local", "bad")
+          : adm.souLider
+            ? badge("lider", "ok")
+            : `<span class="muted">${adm.liderAtual || "-"}</span>`;
         return `<tr><td class="mono">${adm.idServidor}</td><td>${status}</td><td>${lider}</td></tr>`;
       }).join("");
 
@@ -453,10 +659,15 @@ DEMO_HTML = """
       }).join("") || `<tr><td colspan="4" class="muted">Sem pedidos ativos</td></tr>`;
       renderFlow(order);
       renderTimeline(order);
+      renderRoleViews(order);
+      renderMap(order);
 
       const souLider = self && self.souLider;
       for (const id of ["criar", "preparar", "aceitar", "confirmar", "demo-auto"]) $(id).disabled = !souLider;
-      $("command-status").value = souLider ? "ADM lider" : "Abra comandos no lider";
+      for (const id of ["cliente-criar", "restaurante-preparar", "entregador-aceitar", "cliente-confirmar"]) $(id).disabled = !souLider;
+      $("command-status").value = claimedLeaders.length > 1
+        ? "Cluster inconsistente: reinicie os ADMs"
+        : souLider ? "ADM lider" : "Abra comandos no lider";
       $("updated-at").value = new Date().toLocaleTimeString();
     }
 
@@ -539,6 +750,10 @@ DEMO_HTML = """
     $("aceitar").addEventListener("click", () => aceitarPedido().catch((err) => log(err.message)));
     $("preparar").addEventListener("click", () => prepararPedido().catch((err) => log(err.message)));
     $("confirmar").addEventListener("click", () => confirmarEntrega().catch((err) => log(err.message)));
+    $("cliente-criar").addEventListener("click", () => criarPedido().catch((err) => log(err.message)));
+    $("restaurante-preparar").addEventListener("click", () => prepararPedido().catch((err) => log(err.message)));
+    $("entregador-aceitar").addEventListener("click", () => aceitarPedido().catch((err) => log(err.message)));
+    $("cliente-confirmar").addEventListener("click", () => confirmarEntrega().catch((err) => log(err.message)));
     $("demo-auto").addEventListener("click", () => demoRapida().catch((err) => log(err.message)));
     document.querySelectorAll("[data-tracker]").forEach((button) => {
       button.addEventListener("click", () => keepAlive(button.dataset.tracker).catch((err) => log(err.message)));
