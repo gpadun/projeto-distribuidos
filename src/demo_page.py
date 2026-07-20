@@ -508,7 +508,7 @@ DEMO_HTML = """
           <div class="place end">C</div>
           <div class="driver-dot" id="driver-dot">E</div>
           <div class="route-details">
-            <strong id="route-percent">0% da rota</strong>
+            <strong id="route-percent">0% do fluxo</strong>
             <span id="route-coords" class="mono">GPS aguardando</span>
           </div>
           <div class="map-status">
@@ -545,6 +545,7 @@ DEMO_HTML = """
     const nowTs = () => Math.floor(Date.now() / 1000);
     const newId = () => crypto.randomUUID();
     const routeDurationMs = 24000;
+    const deliveryStartProgress = 42;
     const routeOrigin = { lat: -23.55052, lon: -46.633308 };
     const routeDestination = { lat: -23.55612, lon: -46.63955 };
 
@@ -602,7 +603,8 @@ DEMO_HTML = """
         startedAt = Date.now();
         localStorage.setItem(key, String(startedAt));
       }
-      return Math.min(((Date.now() - startedAt) / routeDurationMs) * 100, 100);
+      const deliveryProgress = Math.min(((Date.now() - startedAt) / routeDurationMs) * 100, 100);
+      return deliveryStartProgress + ((100 - deliveryStartProgress) * (deliveryProgress / 100));
     }
 
     function routeCoords(progress) {
@@ -665,11 +667,14 @@ DEMO_HTML = """
     function renderMap(order) {
       let progress = 0;
       let status = "Aguardando pedido";
+      let coords = "GPS aguardando";
       if (order) {
-        status = "Pedido criado";
+        progress = 18;
+        status = "Pedido enviado ao restaurante";
       }
       if (order && order.restaurantePreparou) {
-        status = "Aguardando entregador";
+        progress = deliveryStartProgress;
+        status = "Pedido pronto; aguardando entregador";
       }
       if (order && order.idEntregador) {
         progress = routeProgress(order);
@@ -677,6 +682,7 @@ DEMO_HTML = """
         status = progress >= 100
           ? `Destino alcancado (${order.servidorRastreadorResponsavel || "rastreador"})`
           : `Em rota ${rounded}% (${order.servidorRastreadorResponsavel || "rastreador"})`;
+        coords = routeCoords(progress);
       }
       const left = 11 + (progress * 0.78);
       $("route-progress").style.width = `${progress}%`;
@@ -684,8 +690,8 @@ DEMO_HTML = """
       $("driver-dot").classList.toggle("moving", Boolean(order && order.idEntregador && progress < 100));
       $("driver-dot").classList.toggle("arrived", Boolean(order && order.idEntregador && progress >= 100));
       $("map-status").textContent = status;
-      $("route-percent").textContent = `${Math.round(progress)}% da rota`;
-      $("route-coords").textContent = order && order.idEntregador ? routeCoords(progress) : "GPS aguardando";
+      $("route-percent").textContent = `${Math.round(progress)}% do fluxo`;
+      $("route-coords").textContent = coords;
     }
 
     function renderCluster() {
