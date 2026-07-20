@@ -505,6 +505,9 @@ Documentacao interativa: `http://127.0.0.1:8000/docs` (ou porta do ADM).
 
 Este roteiro inclui o restaurante como processo distribuido: ele consome
 `PedidoDisponivel` pelo broker e marca o pedido como preparado no ADM lider.
+O entregador publica coordenadas em um trajeto simulado com origem e destino
+fixos; ao chegar ao destino, o pedido ainda aguarda a confirmacao explicita do
+cliente para encerrar o rastreio.
 
 1. `.\scripts\start_support.ps1` (9101) e `-IdServidor sup-2 -IdRastreador rastreador-2 -Port 9102`
 2. `.\scripts\start_tracker.ps1` e `-IdServidor rastreador-2`
@@ -560,6 +563,10 @@ Confirme entregadores e rastreadores ativos com `.\scripts\demo_estado.ps1`
 (campo `rastreadoresAtivos`). O rastreador responsavel e escolhido por
 **consistent hashing** no UUID do pedido — com poucos pedidos e normal cair
 sempre no mesmo R; com mais pedidos a distribuicao entre R1 e R2 aparece.
+
+Durante a entrega, o GPS do entregador avanca de forma deterministica ate um
+destino simulado. A chegada e logada, mas a finalizacao do pedido permanece no
+comando de confirmacao do cliente.
 
 ### Failover de rastreador
 

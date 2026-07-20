@@ -2,7 +2,6 @@
 
 import argparse
 import asyncio
-import random
 from time import time
 from uuid import UUID
 
@@ -23,14 +22,18 @@ class MockDriver:
         self.id_entregador = id_entregador
         self.id_pedido = UUID(str(id_pedido))
         self.tracker_server = tracker_server
-        self._latitude = -23.55052
-        self._longitude = -46.633308
+        self._origem = (-23.55052, -46.633308)
+        self._destino = (-23.55612, -46.63955)
+        self._passo = 0
+        self._total_passos = 12
 
     async def gerar_localizacao_falsa(self) -> tuple[float, float]:
-        """Move slightly around Sao Paulo to simulate a driver in transit."""
-        self._latitude += random.uniform(-0.001, 0.001)
-        self._longitude += random.uniform(-0.001, 0.001)
-        return round(self._latitude, 6), round(self._longitude, 6)
+        """Move from a fixed origin to a fixed destination in Sao Paulo."""
+        progresso = min(self._passo / self._total_passos, 1.0)
+        latitude = self._origem[0] + ((self._destino[0] - self._origem[0]) * progresso)
+        longitude = self._origem[1] + ((self._destino[1] - self._origem[1]) * progresso)
+        self._passo += 1
+        return round(latitude, 6), round(longitude, 6)
 
     async def enviar_localizacoes_periodicamente(self, intervalo_segundos: float) -> None:
         """Send location events forever, or print them when no tracker is injected."""

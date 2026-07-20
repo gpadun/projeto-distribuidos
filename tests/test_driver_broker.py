@@ -554,3 +554,40 @@ def test_publicar_localizacoes_para_quando_entrega_confirmada(monkeypatch):
     assert not thread.is_alive()
     assert len(publicacoes) >= 1
     assert len(publicacoes) <= 4
+
+
+def test_publicar_localizacoes_avanca_em_direcao_ao_destino(monkeypatch):
+    id_pedido = uuid4()
+    publicacoes = []
+    parar = threading.Event()
+
+    class FakePublisher:
+        def publish(self, exchange, routing_key, message):
+            del exchange, routing_key
+            publicacoes.append(message)
+            if len(publicacoes) >= 4:
+                parar.set()
+
+    monkeypatch.setattr(
+        "src.clients.driver_broker.criar_publisher",
+        lambda settings: FakePublisher(),
+    )
+    monkeypatch.setattr(
+        "src.clients.driver_broker.fechar_publisher",
+        lambda publisher: None,
+    )
+
+    _publicar_localizacoes_periodicas(
+        "entregador-1",
+        id_pedido,
+        0.01,
+        BrokerSettings(enabled=True),
+        parar,
+        {id_pedido: "rastreador-1"},
+    )
+
+    assert len(publicacoes) == 4
+    assert publicacoes[0]["latitude"] == -23.55052
+    assert publicacoes[0]["longitude"] == -46.633308
+    assert publicacoes[-1]["latitude"] < publicacoes[0]["latitude"]
+    assert publicacoes[-1]["longitude"] < publicacoes[0]["longitude"]
