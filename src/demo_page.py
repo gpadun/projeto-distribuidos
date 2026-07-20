@@ -527,7 +527,14 @@ DEMO_HTML = """
         ...options,
       });
       const text = await response.text();
-      const body = text ? JSON.parse(text) : {};
+      let body = {};
+      if (text) {
+        try {
+          body = JSON.parse(text);
+        } catch {
+          body = { detail: text };
+        }
+      }
       if (!response.ok) {
         const detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
         throw new Error(detail || `HTTP ${response.status}`);
@@ -622,13 +629,18 @@ DEMO_HTML = """
       const cluster = state.cluster;
       const self = currentState();
       const order = currentOrder();
+      const claimedLeaders = cluster.estados.filter((adm) => adm.online && adm.souLider);
       $("self-id").textContent = cluster.idServidor;
       $("leader-id").textContent = cluster.liderAtual;
       $("rabbit").textContent = self && self.rabbitmqHabilitado ? "on" : "off";
 
       $("adms").innerHTML = cluster.estados.map((adm) => {
         const status = adm.online ? badge("online", "ok") : badge("offline", "bad");
-        const lider = adm.souLider ? badge("lider", "ok") : `<span class="muted">${adm.liderAtual || "-"}</span>`;
+        const lider = adm.souLider && claimedLeaders.length > 1
+          ? badge("lider local", "bad")
+          : adm.souLider
+            ? badge("lider", "ok")
+            : `<span class="muted">${adm.liderAtual || "-"}</span>`;
         return `<tr><td class="mono">${adm.idServidor}</td><td>${status}</td><td>${lider}</td></tr>`;
       }).join("");
 
@@ -653,7 +665,9 @@ DEMO_HTML = """
       const souLider = self && self.souLider;
       for (const id of ["criar", "preparar", "aceitar", "confirmar", "demo-auto"]) $(id).disabled = !souLider;
       for (const id of ["cliente-criar", "restaurante-preparar", "entregador-aceitar", "cliente-confirmar"]) $(id).disabled = !souLider;
-      $("command-status").value = souLider ? "ADM lider" : "Abra comandos no lider";
+      $("command-status").value = claimedLeaders.length > 1
+        ? "Cluster inconsistente: reinicie os ADMs"
+        : souLider ? "ADM lider" : "Abra comandos no lider";
       $("updated-at").value = new Date().toLocaleTimeString();
     }
 
