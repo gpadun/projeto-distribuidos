@@ -1,7 +1,6 @@
 """Driver client that listens to PedidoDisponivel on RabbitMQ."""
 
 import os
-import random
 import threading
 import time
 from uuid import UUID
@@ -483,9 +482,12 @@ def _publicar_localizacoes_periodicas(
     if publisher is None:
         return
 
-    latitude = -23.55052
-    longitude = -46.633308
+    origem = (-23.55052, -46.633308)
+    destino = (-23.55612, -46.63955)
+    total_passos = 12
+    passo = 0
     primeira_localizacao = True
+    chegada_logada = False
 
     try:
         while not parar_event.is_set():
@@ -495,8 +497,9 @@ def _publicar_localizacoes_periodicas(
                     break
                 continue
 
-            latitude += random.uniform(-0.001, 0.001)
-            longitude += random.uniform(-0.001, 0.001)
+            progresso = min(passo / total_passos, 1.0)
+            latitude = origem[0] + ((destino[0] - origem[0]) * progresso)
+            longitude = origem[1] + ((destino[1] - origem[1]) * progresso)
             localizacao = LocalizacaoEntregador(
                 idEntregador=id_entregador,
                 idPedido=id_pedido,
@@ -515,6 +518,13 @@ def _publicar_localizacoes_periodicas(
                     f"localizacao enviada: pedido={id_pedido} rastreador={id_rastreador}",
                 )
                 primeira_localizacao = False
+            if progresso >= 1.0 and not chegada_logada:
+                log_apresentacao(
+                    "entregador",
+                    f"destino simulado alcancado: pedido={id_pedido}; aguardando confirmacao do cliente",
+                )
+                chegada_logada = True
+            passo += 1
             if parar_event.wait(timeout=intervalo_segundos):
                 break
     except Exception as exc:

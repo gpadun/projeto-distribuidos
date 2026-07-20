@@ -244,6 +244,7 @@ pytest -q -m integration
 - [x] Entregador aceita pedido.
 - [x] ADM atribui pedido a um R.
 - [x] Entregador envia localizacoes.
+- [x] Entregador simula trajeto com origem e destino fixos.
 - [x] Cliente recebe localizacoes.
 - [x] Cliente confirma entrega.
 - [x] Cliente encerra automaticamente ao receber `EntregaConfirmada` (confirmacao de outro terminal).
@@ -282,6 +283,7 @@ pytest -q -m integration
 - [x] Logar entrega confirmada no cliente e encerramento do rastreio (`[cliente]`).
 - [x] Logar servidor rastreador escolhido (`[adm]` na aceitacao + `[rastreador]` no roteamento).
 - [x] Logar localizacao recebida (`[rastreador]` + `[cliente]`).
+- [x] Logar chegada ao destino simulado (`[entregador]`).
 - [x] Logar localizacao ignorada por timestamp antigo (`[rastreador]`).
 - [x] Logar heartbeat recebido (primeira ativacao do rastreador no lider ADM).
 - [x] Logar falha detectada (`[adm]` ao processar heartbeat expirado).
@@ -312,4 +314,6 @@ Desabilitar logs: `PRESENTATION_LOG=0`.
 - [x] Replicacao ADM (roteamento + pedidos) validada manualmente com eleicao de lider.
 - [x] Fila de pedidos sem entregador conforme spec; entregador retenta ao ficar livre.
 - [x] Cliente encerra rastreio ao receber `EntregaConfirmada` publicada pelo ADM.
+- [x] GPS do entregador usa trajeto deterministico com destino simulado; a
+  finalizacao ainda depende da confirmacao manual do cliente.
 - [x] Atualizar este checklist sempre que uma etapa nova for implementada.
