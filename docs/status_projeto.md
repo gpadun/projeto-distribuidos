@@ -270,6 +270,7 @@ pytest -q -m integration
 - [x] Criar script `validate_cluster_manual.ps1`.
 - [x] Criar painel visual para observar ADMs, rastreadores, pedidos e roteamento.
 - [x] Mostrar etapas do pedido no painel: cliente, restaurante, entregador e rastreador.
+- [x] Animar o mapa simulado quando o entregador estiver em rota.
 - [x] Demo manual: replicacao apos aceitar pedido (3 ADMs com mesmo mapa).
 - [x] Demo manual: eleicao apos matar lider com estado preservado no novo lider.
 - [x] Demo manual: confirmar entrega no novo lider em processos reais.

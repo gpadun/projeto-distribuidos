@@ -154,6 +154,23 @@ Cada ADM tambem serve um painel em `/demo`, por exemplo
 rastreadores ativos, pedidos e roteamento, alem de botoes para criar, aceitar e
 confirmar pedidos no ADM que estiver lider.
 
+Para testar a interface visual:
+
+1. Abra o painel do ADM lider, normalmente `http://127.0.0.1:8003/demo`.
+2. Clique em **Atualizar** para conferir lider, RabbitMQ e rastreadores ativos.
+3. Use **Novo ID** para gerar um pedido limpo.
+4. Clique em **Criar pedido**, **Preparar restaurante**, **Aceitar pedido** e
+   **Confirmar entrega** para percorrer manualmente as etapas.
+5. Como alternativa, clique em **Demo rapida** para executar as etapas
+   principais em sequencia.
+
+Durante o teste, as secoes **Cliente**, **Restaurante**, **Entregador** e
+**Mapa Simulado** mostram o papel de cada participante no fluxo distribuido.
+Quando o entregador aceita o pedido, o mapa anima o deslocamento do entregador
+entre restaurante e cliente, exibindo percentual da rota, coordenadas simuladas
+e o rastreador responsavel. A fonte de verdade continua sendo o estado dos ADMs
+e as mensagens do broker.
+
 Aguarde **5 a 10 segundos** para os heartbeats entre os ADMs. Depois confira:
 
 ```powershell
@@ -517,11 +534,12 @@ cliente para encerrar o rastreio.
 6. Acompanhar logs:
    - ADM: `[adm] pedido criado`, `pedido preparado`, `pedido aceito ... rastreador=...`
    - Restaurante: `pedido recebido`, `pedido preparado`
-   - Entregador: `pedido disponivel`, `pedido aceito`
+   - Entregador: `pedido disponivel`, `pedido aceito`,
+     `destino simulado alcancado`
    - Rastreador: `pedido ... atribuido`, `localizacao recebida`
    - Cliente: `localizacao: pedido=...`
    - SUP: `sync recebido ...`
-6. Confirmar entrega em **outro terminal** (o cliente em `demo` encerra sozinho):
+7. Confirmar entrega em **outro terminal** (o cliente em `demo` encerra sozinho):
 
 ```powershell
 .\scripts\start_customer.ps1 -Acao confirmar -IdCliente cliente-1 -IdPedido "UUID-DO-PEDIDO"
@@ -567,6 +585,12 @@ sempre no mesmo R; com mais pedidos a distribuicao entre R1 e R2 aparece.
 Durante a entrega, o GPS do entregador avanca de forma deterministica ate um
 destino simulado. A chegada e logada, mas a finalizacao do pedido permanece no
 comando de confirmacao do cliente.
+
+Para validar especificamente o GPS com destino simulado, deixe o entregador
+rodando por alguns ciclos depois de aceitar um pedido. O painel deve animar o
+ponto do entregador ate `100% da rota` e o terminal do entregador deve registrar
+`destino simulado alcancado`; depois disso, confirme a entrega pelo cliente ou
+pelo botao **Confirmar entrega** no painel.
 
 ### Failover de rastreador
 
