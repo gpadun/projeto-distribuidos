@@ -666,12 +666,10 @@ DEMO_HTML = """
       let progress = 0;
       let status = "Aguardando pedido";
       if (order) {
-        progress = 18;
         status = "Pedido criado";
       }
       if (order && order.restaurantePreparou) {
-        progress = 34;
-        status = "Restaurante preparando";
+        status = "Aguardando entregador";
       }
       if (order && order.idEntregador) {
         progress = routeProgress(order);
