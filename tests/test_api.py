@@ -186,6 +186,8 @@ def test_demo_page_disponivel():
     assert "Preparar restaurante" in response.text
     assert "Fluxo Distribuido" in response.text
     assert "Etapas do Pedido" in response.text
+    assert "route-percent" in response.text
+    assert "GPS aguardando" in response.text
     assert "Demo rápida" in response.text
 
 

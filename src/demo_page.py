@@ -327,7 +327,15 @@ DEMO_HTML = """
       color: #fff;
       box-shadow: 0 8px 18px rgba(21, 94, 239, 0.25);
       font-size: 16px;
-      transition: left 220ms ease;
+      transition: left 900ms linear;
+    }
+
+    .driver-dot.moving {
+      box-shadow: 0 0 0 8px rgba(21, 94, 239, 0.12), 0 8px 18px rgba(21, 94, 239, 0.25);
+    }
+
+    .driver-dot.arrived {
+      background: var(--ok);
     }
 
     .map-status {
@@ -341,6 +349,27 @@ DEMO_HTML = """
       color: var(--muted);
       font-size: 12px;
       font-weight: 700;
+    }
+
+    .route-details {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      display: grid;
+      gap: 4px;
+      min-width: 170px;
+      padding: 8px 10px;
+      border: 1px solid rgba(21, 94, 239, 0.18);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.92);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .route-details strong {
+      color: var(--ink);
+      font-size: 13px;
     }
 
     .step {
@@ -478,6 +507,10 @@ DEMO_HTML = """
           <div class="place start">R</div>
           <div class="place end">C</div>
           <div class="driver-dot" id="driver-dot">E</div>
+          <div class="route-details">
+            <strong id="route-percent">0% da rota</strong>
+            <span id="route-coords" class="mono">GPS aguardando</span>
+          </div>
           <div class="map-status">
             <span>Restaurante</span>
             <span id="map-status">Aguardando pedido</span>
@@ -511,6 +544,10 @@ DEMO_HTML = """
     const $ = (id) => document.getElementById(id);
     const nowTs = () => Math.floor(Date.now() / 1000);
     const newId = () => crypto.randomUUID();
+    const routeDurationMs = 24000;
+    const deliveryStartProgress = 42;
+    const routeOrigin = { lat: -23.55052, lon: -46.633308 };
+    const routeDestination = { lat: -23.55612, lon: -46.63955 };
 
     function log(message) {
       const line = `[${new Date().toLocaleTimeString()}] ${message}`;
@@ -552,6 +589,32 @@ DEMO_HTML = """
       if (!self) return null;
       const detalhe = self.pedidosDetalhe || {};
       return detalhe[$("pedido").value] || Object.values(detalhe)[0] || null;
+    }
+
+    function routeStorageKey(order) {
+      return `dsid-demo-route-start-${order.idPedido}`;
+    }
+
+    function routeProgress(order) {
+      if (!order || !order.idEntregador) return { visual: 0, delivery: 0 };
+      const key = routeStorageKey(order);
+      let startedAt = Number(localStorage.getItem(key));
+      if (!startedAt) {
+        startedAt = Date.now();
+        localStorage.setItem(key, String(startedAt));
+      }
+      const deliveryProgress = Math.min(((Date.now() - startedAt) / routeDurationMs) * 100, 100);
+      return {
+        visual: deliveryStartProgress + ((100 - deliveryStartProgress) * (deliveryProgress / 100)),
+        delivery: deliveryProgress,
+      };
+    }
+
+    function routeCoords(progress) {
+      const ratio = Math.max(0, Math.min(progress, 100)) / 100;
+      const lat = routeOrigin.lat + ((routeDestination.lat - routeOrigin.lat) * ratio);
+      const lon = routeOrigin.lon + ((routeDestination.lon - routeOrigin.lon) * ratio);
+      return `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
     }
 
     function renderFlow(order) {
@@ -606,23 +669,35 @@ DEMO_HTML = """
 
     function renderMap(order) {
       let progress = 0;
+      let deliveryPercent = 0;
       let status = "Aguardando pedido";
+      let coords = "GPS aguardando";
       if (order) {
         progress = 18;
-        status = "Pedido criado";
+        status = "Pedido enviado ao restaurante";
       }
       if (order && order.restaurantePreparou) {
-        progress = 34;
-        status = "Restaurante preparando";
+        progress = deliveryStartProgress;
+        status = "Pedido pronto; aguardando entregador";
       }
       if (order && order.idEntregador) {
-        progress = 68;
-        status = `Em rota (${order.servidorRastreadorResponsavel || "rastreador"})`;
+        const route = routeProgress(order);
+        progress = route.visual;
+        deliveryPercent = route.delivery;
+        const rounded = Math.round(route.delivery);
+        status = route.delivery >= 100
+          ? `Destino alcancado (${order.servidorRastreadorResponsavel || "rastreador"})`
+          : `Em rota ${rounded}% (${order.servidorRastreadorResponsavel || "rastreador"})`;
+        coords = routeCoords(route.delivery);
       }
       const left = 11 + (progress * 0.78);
       $("route-progress").style.width = `${progress}%`;
       $("driver-dot").style.left = `${left}%`;
+      $("driver-dot").classList.toggle("moving", Boolean(order && order.idEntregador && progress < 100));
+      $("driver-dot").classList.toggle("arrived", Boolean(order && order.idEntregador && progress >= 100));
       $("map-status").textContent = status;
+      $("route-percent").textContent = `${Math.round(deliveryPercent)}% da rota`;
+      $("route-coords").textContent = coords;
     }
 
     function renderCluster() {
@@ -718,12 +793,14 @@ DEMO_HTML = """
     }
 
     async function confirmarEntrega() {
+      const order = currentOrder();
       const body = {
         idPedido: $("pedido").value,
         idCliente: $("cliente").value,
         timestamp: nowTs(),
       };
       const evento = await request("/pedidos/confirmar", { method: "POST", body: JSON.stringify(body) });
+      if (order) localStorage.removeItem(routeStorageKey(order));
       log(`entrega confirmada ${evento.idPedido}`);
       await refresh();
     }
@@ -761,6 +838,7 @@ DEMO_HTML = """
 
     refresh().catch((err) => log(err.message));
     setInterval(() => refresh().catch(() => {}), 3000);
+    setInterval(() => renderMap(currentOrder()), 500);
   </script>
 </body>
 </html>
